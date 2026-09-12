@@ -408,7 +408,7 @@ export default function Home() {
             <label className="inline-flex items-center gap-2 text-sm text-gray-600">
               <span className="font-medium">Currency:</span>
               <select
-                value={pricing?.currency || 'INR'}
+                value={pricing?.currency || 'USD'}
                 onChange={handleCurrencyChange}
                 className="border border-gray-300 rounded-lg px-3 py-2 text-sm font-medium text-[#0B1B3A] bg-white focus:outline-none focus:ring-2 focus:ring-[#1E5FE8] focus:border-[#1E5FE8] cursor-pointer"
               >
@@ -431,7 +431,7 @@ export default function Home() {
                 <span className="text-4xl font-bold text-[#0B1B3A]">
                   {pricing
                     ? formatPlanPrice(pricing.monthly, pricing.locale, pricing.currency)
-                    : '₹999'}
+                    : '$49'}
                 </span>
                 <span className="text-gray-400">/month</span>
               </div>
@@ -467,7 +467,7 @@ export default function Home() {
                 <span className="text-4xl font-bold text-[#0B1B3A]">
                   {pricing
                     ? formatPlanPrice(pricing.annual, pricing.locale, pricing.currency)
-                    : '₹9,999'}
+                    : '$490'}
                 </span>
                 <span className="text-gray-400">/year</span>
               </div>

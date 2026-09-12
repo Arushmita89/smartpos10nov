@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { convertAmount } from '@/lib/currency';
-import { currencyForCountry } from '@/app/features/owner/currencyData';
 
 export const dynamic = 'force-dynamic';
 
-const PLAN_PRICES: Record<string, number> = {
-  monthly: 999,
-  annual: 9999,
+const PLAN_PRICES: Record<string, Record<string, number>> = {
+  monthly: { INR: 999, USD: 49 },
+  annual: { INR: 9999, USD: 490 },
 };
 
 export async function GET(req: NextRequest) {
@@ -14,38 +13,45 @@ export async function GET(req: NextRequest) {
     const requested = req.nextUrl.searchParams
       .get('currency')
       ?.toUpperCase();
-    const country =
-      req.headers.get('x-vercel-ip-country')?.toUpperCase() || 'IN';
-    const currencyCode = requested || currencyForCountry(country) || 'INR';
+    const currencyCode = requested || 'USD';
     const locale = currencyCode === 'INR' ? 'en-IN' : 'en-US';
 
-    const monthly = await convertAmount(
-      PLAN_PRICES.monthly,
-      'INR',
-      currencyCode
-    );
-    const annual = await convertAmount(PLAN_PRICES.annual, 'INR', currencyCode);
+    const baseMonthly = PLAN_PRICES.monthly[currencyCode];
+    const baseAnnual = PLAN_PRICES.annual[currencyCode];
+    const isBase =
+      baseMonthly != null && baseAnnual != null;
+
+    let monthly: number | null = null;
+    let annual: number | null = null;
+
+    if (isBase) {
+      monthly = baseMonthly!;
+      annual = baseAnnual!;
+    } else {
+      monthly = await convertAmount(999, 'INR', currencyCode);
+      annual = await convertAmount(9999, 'INR', currencyCode);
+    }
 
     if (monthly == null || annual == null) {
       return NextResponse.json({
-        country,
-        currency: 'INR',
-        locale: 'en-IN',
-        monthly: PLAN_PRICES.monthly,
-        annual: PLAN_PRICES.annual,
+        country: 'US',
+        currency: 'USD',
+        locale: 'en-US',
+        monthly: PLAN_PRICES.monthly.USD,
+        annual: PLAN_PRICES.annual.USD,
         note: null,
       });
     }
 
     return NextResponse.json({
-      country,
+      country: 'US',
       currency: currencyCode,
       locale,
       monthly: Math.round(monthly),
       annual: Math.round(annual),
       note:
         currencyCode !== 'INR'
-          ? `Approx. ${currencyCode} price. Total billed in INR at checkout.`
+          ? `Approx. ${currencyCode} price. Total billed in your local currency at checkout.`
           : null,
     });
   } catch {
