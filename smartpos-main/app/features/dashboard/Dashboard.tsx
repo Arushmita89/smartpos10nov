@@ -10,11 +10,14 @@ import OrderManagement from '@/components/dashboard/OrderManagement';
 import Analytics from '@/components/dashboard/Analytics';
 import RestaurantDashboard from '@/components/dashboard/RestaurantDashboard';
 import MenuManagement from '@/components/dashboard/MenuManagement';
+import InventoryManagement from '@/components/dashboard/InventoryManagement';
+import CustomerManagement from '@/components/dashboard/CustomerManagement';
 import UserManagement from '@/components/dashboard/UserManagement';
 import MPINAuth from '@/components/auth/MPINAuth';
 import NotificationBell from '@/components/subscription/NotificationBell';
 import { usePOSStore } from '@/lib/store';
 import { isOwner } from '@/lib/owner';
+import { supabase } from '@/lib/supabase';
 import toast from 'react-hot-toast';
 import {
   ShoppingCart,
@@ -70,6 +73,36 @@ export default function Dashboard() {
   const [isRestaurantModeAuthenticated, setIsRestaurantModeAuthenticated] =
     useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [criticalStockCount, setCriticalStockCount] = useState(0);
+
+  useEffect(() => {
+    const rid = restaurant?.restaurant_id;
+    if (!rid) return;
+    let cancelled = false;
+    let isMounted = true;
+    async function loadCriticalCount() {
+      try {
+        const { data, error } = await supabase
+          .from('ingredients')
+          .select('current_stock, critical_threshold')
+          .eq('restaurant_id', rid);
+        if (error || cancelled) return;
+        const count = (data || []).filter((ing) => {
+          const stock = Number(ing.current_stock || 0);
+          if (stock <= 0) return true;
+          return Number(ing.critical_threshold || 0) > 0 && stock <= Number(ing.critical_threshold);
+        }).length;
+        if (isMounted && !cancelled) setCriticalStockCount(count);
+      } catch {
+        /* ignore */
+      }
+    }
+    loadCriticalCount();
+    return () => {
+      cancelled = true;
+      isMounted = false;
+    };
+  }, [restaurant?.restaurant_id]);
 
   useEffect(() => {
     if (ownerAccess && activeSection !== 'owner-home') {
@@ -249,6 +282,11 @@ export default function Dashboard() {
                   >
                     <Icon className="h-5 w-5 mr-3 flex-shrink-0" />
                     {item.name}
+                    {item.id === 'inventory' && criticalStockCount > 0 && (
+                      <span className="ml-auto inline-flex items-center justify-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-red-500 text-white min-w-[18px]">
+                        {criticalStockCount}
+                      </span>
+                    )}
                   </button>
                 </li>
               );
@@ -428,18 +466,8 @@ export default function Dashboard() {
             <OrderManagement restaurant={restaurant} />
           )}
           {activeSection === 'menu' && <MenuManagement restaurant={restaurant} />}
-          {activeSection === 'inventory' && (
-            <div className="bg-white rounded-lg shadow p-6">
-              <h3 className="text-lg font-medium text-gray-900 mb-2">Inventory Management</h3>
-              <p className="text-gray-600">Inventory management features coming soon.</p>
-            </div>
-          )}
-          {activeSection === 'customers' && (
-            <div className="bg-white rounded-lg shadow p-6">
-              <h3 className="text-lg font-medium text-gray-900 mb-2">Customer Management</h3>
-              <p className="text-gray-600">Customer management features coming soon.</p>
-            </div>
-          )}
+          {activeSection === 'inventory' && <InventoryManagement restaurant={restaurant} />}
+          {activeSection === 'customers' && <CustomerManagement restaurant={restaurant} />}
           {activeSection === 'reports' && <Analytics restaurant={restaurant} />}
           {activeSection === 'settings' && (
             <RestaurantDashboard />

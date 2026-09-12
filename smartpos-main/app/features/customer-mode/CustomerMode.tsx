@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
-import { ShoppingCart, Plus, Minus, Printer, MessageCircle, X, Search, CreditCard, UtensilsCrossed, ShoppingBag, Truck, Clock, Store } from "lucide-react";
-import { usePOSStore } from "@/lib/store";
+import { ShoppingCart, Plus, Minus, Printer, MessageCircle, X, Search, CreditCard, UtensilsCrossed, ShoppingBag, Truck, Clock, Store, AlertTriangle } from "lucide-react";
+import { usePOSStore, checkMenuItemsStock, checkAllMenuItemsStock } from "@/lib/store";
+import type { MenuItemStockStatus } from "@/lib/store";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatCurrency } from "@/lib/utils";
 import ItemOptionsDialog from "@/components/ui/ItemOptionsDialog";
@@ -566,6 +567,9 @@ export default function CustomerMode({
   } | null>(null);
   const [orderType, setOrderType] = useState<"dinein" | "takeaway" | "delivery">(customerMode ? "delivery" : "dinein");
   const [estimatedDeliveryTime, setEstimatedDeliveryTime] = useState<number>(30);
+  const [stockCheckResults, setStockCheckResults] = useState<MenuItemStockStatus[]>([]);
+  const [isCheckingStock, setIsCheckingStock] = useState(false);
+  const [outOfStockItems, setOutOfStockItems] = useState<Set<string>>(new Set());
 
   const {
     products,
@@ -584,6 +588,8 @@ export default function CustomerMode({
     activeOrders,
     activeOrdersLoading,
     fetchActiveOrders,
+    lastStockAlerts,
+    clearStockAlerts,
   } = usePOSStore();
   const { restaurant: authRestaurant } = useAuth();
   // Public/customer mode is driven purely by the restaurant code — it must never
@@ -620,6 +626,27 @@ export default function CustomerMode({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [restaurantId]);
+
+  // Determine which menu items are out of stock based on ingredient availability
+  useEffect(() => {
+    if (!restaurantId || products.length === 0) return;
+    let cancelled = false;
+    const checkStock = async () => {
+      try {
+        const availability = await checkAllMenuItemsStock(restaurantId);
+        if (cancelled) return;
+        const unavailable = new Set<string>();
+        availability.forEach((avail, name) => {
+          if (!avail) unavailable.add(name);
+        });
+        setOutOfStockItems(unavailable);
+      } catch {
+        // silently ignore — availability is an enhancement, not a blocker
+      }
+    };
+    checkStock();
+    return () => { cancelled = true; };
+  }, [restaurantId, products.length]);
 
   // Customer mode is its own self-contained ordering session: start from a clean
   // cart and default table/tab so the customer can't see or carry the POS's state.
@@ -659,6 +686,51 @@ export default function CustomerMode({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onBack]);
+
+  // Check stock availability when cart changes
+  useEffect(() => {
+    if (!restaurantId || cart.length === 0) {
+      setStockCheckResults([]);
+      return;
+    }
+    let cancelled = false;
+    const checkStock = async () => {
+      setIsCheckingStock(true);
+      try {
+        const results = await checkMenuItemsStock(
+          restaurantId,
+          cart.map((c) => ({ name: c.name, quantity: c.quantity }))
+        );
+        if (!cancelled) setStockCheckResults(results);
+      } catch {
+        if (!cancelled) setStockCheckResults([]);
+      } finally {
+        if (!cancelled) setIsCheckingStock(false);
+      }
+    };
+    const timer = setTimeout(checkStock, 300);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [restaurantId, cart]);
+
+  // Show toast when stock alerts arrive after order creation
+  useEffect(() => {
+    if (lastStockAlerts.length > 0) {
+      lastStockAlerts.forEach((alert) => {
+        if (alert.severity === 'negative') {
+          toast.error(
+            `OUT OF STOCK: ${alert.ingredientName} went negative (${alert.after} ${alert.unit}). Order cannot be fully fulfilled.`,
+            { duration: 6000 }
+          );
+        } else {
+          toast(
+            `CRITICAL: ${alert.ingredientName} is critically low (${alert.after} ${alert.unit}). Please restock soon.`,
+            { icon: '⚠️', duration: 5000 }
+          );
+        }
+      });
+      clearStockAlerts();
+    }
+  }, [lastStockAlerts, clearStockAlerts]);
 
   const filteredProducts = useMemo(
     () =>
@@ -713,6 +785,15 @@ export default function CustomerMode({
 
   const handleProceedToPayment = () => {
     if (!canPay) return;
+    const unavailable = stockCheckResults.filter((r) => !r.available);
+    if (unavailable.length > 0) {
+      toast(
+        `${unavailable.length} item(s) in your cart have insufficient ingredients and may not be fully fulfilled: ${unavailable
+          .map((u) => u.menuItemName)
+          .join(", ")}`,
+        { icon: "⚠️", duration: 6000 }
+      );
+    }
     setShowMobileCart(false);
     setShowCustomerInfo(true);
   };
@@ -720,6 +801,16 @@ export default function CustomerMode({
   // QD-01: unpaid KOT-style send — inserts a real 'pending' order with no payment collected
   const handleSendToKitchen = async () => {
     if (!restaurantId || cart.length === 0 || sendingToKitchen) return;
+    const unavailable = stockCheckResults.filter((r) => !r.available);
+    if (unavailable.length > 0) {
+      toast.error(
+        `Cannot send to kitchen — ingredient stock insufficient: ${unavailable
+          .map((u) => u.menuItemName)
+          .join(", ")}`,
+        { duration: 6000 }
+      );
+      return;
+    }
     setSendingToKitchen(true);
     try {
       const order = await createOrder({
@@ -1007,6 +1098,33 @@ export default function CustomerMode({
         )}
       </div>
       <div className="p-4 border-t bg-gray-50 space-y-2">
+        {isCheckingStock && (
+          <p className="text-[11px] text-gray-400 text-center animate-pulse">Checking stock availability...</p>
+        )}
+        {stockCheckResults.length > 0 && stockCheckResults.some((r) => !r.available) && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3 space-y-1.5">
+            <p className="text-xs font-semibold text-red-700 flex items-center gap-1">
+              <AlertTriangle className="w-3.5 h-3.5" /> Insufficient Stock
+            </p>
+            {stockCheckResults
+              .filter((r) => !r.available)
+              .map((r) => (
+                <div key={r.menuItemId} className="text-xs text-red-600">
+                  <span className="font-medium">{r.menuItemName}</span> —{" "}
+                  {r.missingIngredients
+                    .map((m) =>
+                      m.available <= 0
+                        ? `${m.name} is out of stock (need ${m.needed} ${m.unit})`
+                        : `only ${m.available} ${m.unit} of ${m.name} left (need ${m.needed} ${m.unit})`
+                    )
+                    .join("; ")}
+                </div>
+              ))}
+            <p className="text-[11px] text-red-500 italic">
+              These items can&apos;t be fully prepared right now. Remove them from the cart or alert the kitchen.
+            </p>
+          </div>
+        )}
         {activeOrders.length > 0 && !isOffPremise && (
           <>
             <div className="flex justify-between text-sm text-gray-600">
@@ -1254,8 +1372,15 @@ export default function CustomerMode({
               {filteredProducts.map((p) => (
                 <div
                   key={p.id}
-                  className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow"
+                  className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow relative"
                 >
+                  {outOfStockItems.has(p.name) && (
+                    <div className="absolute inset-0 z-10 bg-white/70 backdrop-blur-[1px] flex items-center justify-center">
+                      <span className="bg-red-600 text-white text-xs font-bold px-3 py-1.5 rounded-full uppercase tracking-wide shadow">
+Out of Stock
+                      </span>
+                    </div>
+                  )}
                   <div className="w-full h-40 bg-gray-100">
                     {p.image_url && (
                       // eslint-disable-next-line @next/next/no-img-element
@@ -1275,11 +1400,16 @@ export default function CustomerMode({
                     <div className="flex items-center justify-between mt-2">
                       <span className="text-base font-bold text-gray-900">{formatCurrency(p.price, currency)}</span>
                       <button
-                        className="bg-blue-600 text-white rounded-lg px-3 py-1.5 hover:bg-blue-700 flex items-center text-sm transition-colors"
+                        className={`rounded-lg px-3 py-1.5 flex items-center text-sm transition-colors ${
+                          outOfStockItems.has(p.name)
+                            ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                            : "bg-blue-600 text-white hover:bg-blue-700"
+                        }`}
+                        disabled={outOfStockItems.has(p.name)}
                         onClick={() => setOptionsDialogItem(p)}
                       >
                         <Plus className="w-3.5 h-3.5 mr-1" />
-                        Add
+                        {outOfStockItems.has(p.name) ? "Out of Stock" : "Add"}
                       </button>
                     </div>
                   </div>

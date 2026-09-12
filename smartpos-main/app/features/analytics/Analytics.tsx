@@ -38,12 +38,28 @@ interface AnalyticsData {
 type DateFilter = "today" | "week" | "month" | "year" | "all";
 type ExportFormat = "csv" | "excel" | "pdf";
 
+interface IngredientReport {
+  id: string;
+  name: string;
+  category: string;
+  unit: string;
+  current_stock: number;
+  cost_per_unit: number | null;
+  consumed: number;
+  restocked: number;
+  wasted: number;
+  consumedCost: number;
+  wastedCost: number;
+}
+
 export default function Analytics({ restaurant }: AnalyticsProps) {
   const currency = restaurant.currency || 'INR';
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [dateFilter, setDateFilter] = useState<DateFilter>("month");
   const [customDateRange, setCustomDateRange] = useState({ start: "", end: "" });
+  const [inventoryReport, setInventoryReport] = useState<IngredientReport[] | null>(null);
+  const [inventoryLoading, setInventoryLoading] = useState(false);
 
   const getDateRange = useCallback(() => {
     const now = new Date();
@@ -142,6 +158,71 @@ export default function Analytics({ restaurant }: AnalyticsProps) {
   useEffect(() => {
     fetchAnalytics();
   }, [fetchAnalytics]);
+
+  const fetchInventoryReport = useCallback(async () => {
+    setInventoryLoading(true);
+    try {
+      const { start, end } = getDateRange();
+
+      let query = supabase
+        .from("stock_movements")
+        .select("ingredient_id, type, quantity_change, created_at")
+        .eq("restaurant_id", restaurant.restaurant_id);
+      if (start) query = query.gte("created_at", start);
+      if (end) query = query.lte("created_at", end);
+
+      const { data: movements, error } = await query;
+      if (error) throw error;
+
+      const { data: ingredients, error: ingError } = await supabase
+        .from("ingredients")
+        .select("id, name, category, unit, current_stock, cost_per_unit")
+        .eq("restaurant_id", restaurant.restaurant_id);
+      if (ingError) throw ingError;
+
+      const movementsByIngredient: Record<string, { consumed: number; restocked: number; wasted: number }> = {};
+      (movements || []).forEach((m: any) => {
+        const agg = movementsByIngredient[m.ingredient_id] || { consumed: 0, restocked: 0, wasted: 0 };
+        const qty = Number(m.quantity_change || 0);
+        if (m.type === "order") agg.consumed += Math.abs(qty);
+        else if (m.type === "waste") agg.wasted += Math.abs(qty);
+        else if (m.type === "restock" || m.type === "opening") agg.restocked += qty;
+        movementsByIngredient[m.ingredient_id] = agg;
+      });
+
+      const report: IngredientReport[] = (ingredients || []).map((ing: any) => {
+        const agg = movementsByIngredient[ing.id] || { consumed: 0, restocked: 0, wasted: 0 };
+        const cost = ing.cost_per_unit != null ? Number(ing.cost_per_unit) : 0;
+        return {
+          id: ing.id,
+          name: ing.name,
+          category: ing.category,
+          unit: ing.unit,
+          current_stock: Number(ing.current_stock || 0),
+          cost_per_unit: ing.cost_per_unit,
+          consumed: agg.consumed,
+          restocked: agg.restocked,
+          wasted: agg.wasted,
+          consumedCost: agg.consumed * cost,
+          wastedCost: agg.wasted * cost,
+        };
+      });
+
+      setInventoryReport(report);
+    } catch (err) {
+      console.error("Error fetching inventory report:", err);
+      setInventoryReport(null);
+    } finally {
+      setInventoryLoading(false);
+    }
+  }, [restaurant.restaurant_id, getDateRange]);
+
+  useEffect(() => {
+    if (analytics) {
+      fetchInventoryReport();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateFilter, analytics !== null]);
 
   const exportData = async (format: ExportFormat) => {
     if (!analytics) return;
@@ -391,6 +472,98 @@ export default function Analytics({ restaurant }: AnalyticsProps) {
           </div>
         </>
       )}
+
+      {/* ============ Inventory / Consumption Report ============ */}
+      <div className="bg-white rounded-lg shadow">
+        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-medium text-gray-900">Inventory Consumption</h3>
+            <p className="text-sm text-gray-500">
+              Ingredient usage for {dateFilter}. Shows order consumption, restock, and waste.
+            </p>
+          </div>
+          {inventoryLoading && <LoadingSpinner size="sm" />}
+        </div>
+        {inventoryReport && inventoryReport.length > 0 ? (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 px-6 py-4">
+              {(() => {
+                const totalConsumedCost = inventoryReport.reduce((s, i) => s + i.consumedCost, 0);
+                const totalWastedCost = inventoryReport.reduce((s, i) => s + i.wastedCost, 0);
+                const wastePct = totalConsumedCost + totalWastedCost > 0
+                  ? (totalWastedCost / (totalConsumedCost + totalWastedCost)) * 100
+                  : 0;
+                return (
+                  <>
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <p className="text-xs font-medium text-gray-500 uppercase">Food Cost (consumed)</p>
+                      <p className="text-xl font-bold text-gray-900">{formatCurrency(totalConsumedCost, currency)}</p>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <p className="text-xs font-medium text-gray-500 uppercase">Waste Cost</p>
+                      <p className="text-xl font-bold text-red-600">{formatCurrency(totalWastedCost, currency)}</p>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <p className="text-xs font-medium text-gray-500 uppercase">Waste %</p>
+                      <p className="text-xl font-bold text-amber-600">{wastePct.toFixed(1)}%</p>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ingredient</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Consumed</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Restocked</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Wasted</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">On hand</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Consumed cost</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {inventoryReport
+                    .filter((i) => i.consumed > 0 || i.wasted > 0 || i.restocked > 0)
+                    .sort((a, b) => b.consumed - a.consumed)
+                    .map((i) => (
+                      <tr key={i.id}>
+                        <td className="px-6 py-3 whitespace-nowrap text-sm font-medium text-gray-900">{i.name}</td>
+                        <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-500">{i.category}</td>
+                        <td className="px-6 py-3 whitespace-nowrap text-right text-sm text-blue-600 font-medium">
+                          {i.consumed.toFixed(2)} {i.unit}
+                        </td>
+                        <td className="px-6 py-3 whitespace-nowrap text-right text-sm text-green-600">
+                          +{i.restocked.toFixed(2)}
+                        </td>
+                        <td className="px-6 py-3 whitespace-nowrap text-right text-sm text-red-600">
+                          {i.wasted.toFixed(2)}
+                        </td>
+                        <td className="px-6 py-3 whitespace-nowrap text-right text-sm text-gray-500">
+                          {i.current_stock.toFixed(2)} {i.unit}
+                        </td>
+                        <td className="px-6 py-3 whitespace-nowrap text-right text-sm font-medium text-gray-900">
+                          {formatCurrency(i.consumedCost, currency)}
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : (
+          <div className="px-6 py-10 text-center">
+            <Package className="h-10 w-10 text-gray-300 mx-auto mb-3" />
+            <p className="text-gray-500 text-sm">
+              {inventoryReport
+                ? "No ingredient movement in this period. Add ingredients and stock movements to see consumption."
+                : "Inventory report unavailable. Ensure the ingredients and stock_movements tables exist."}
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

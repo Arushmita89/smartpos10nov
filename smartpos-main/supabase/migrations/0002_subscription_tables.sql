@@ -75,8 +75,6 @@ create policy open_insert_payments on public.payments
 
 -- Seed default plans (adjust prices as needed)
 insert into public.subscription_plans (name, duration_days, price) values
-  ('1 Month', 30, 299),
-  ('3 Months', 90, 799),
-  ('6 Months', 180, 1499),
-  ('12 Months', 365, 2499)
+  ('Monthly Plan', 30, 999),
+  ('Annual Plan', 365, 9999)
 on conflict do nothing;

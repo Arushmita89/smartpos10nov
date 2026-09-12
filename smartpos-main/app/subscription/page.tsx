@@ -440,6 +440,14 @@ function SubscriptionPageContent() {
           })}
         </div>
 
+        {plans.length > 0 && (
+          <div className="text-center mt-2 mb-6">
+            <p className="text-blue-100 text-xs">
+              Subject to change according to restaurant size and number of tables. These charges are for up to a table number of 10.
+            </p>
+          </div>
+        )}
+
         {plans.length === 0 && (
           <div className="bg-white rounded-2xl shadow-xl p-8 text-center max-w-md mx-auto">
             <p className="text-gray-500">No plans available. Please check back later.</p>

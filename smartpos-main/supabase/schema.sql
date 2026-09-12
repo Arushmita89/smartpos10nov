@@ -218,7 +218,64 @@ create table if not exists public.payment_history (
 create index if not exists idx_payment_history_subscription on public.payment_history(subscription_id);
 
 -- ============================================================
--- 11. profiles — user profiles
+-- 11a. ingredients — raw stock items per restaurant
+-- ============================================================
+create table if not exists public.ingredients (
+  id uuid primary key default gen_random_uuid(),
+  restaurant_id text not null references public.parameters(restaurant_id) on delete cascade,
+  name text not null,
+  category text not null default 'Other',
+  unit text not null default 'pcs',
+  current_stock numeric not null default 0,
+  reorder_level numeric not null default 0,
+  low_threshold numeric not null default 0,
+  critical_threshold numeric not null default 0,
+  supplier_name text,
+  supplier_contact text,
+  cost_per_unit numeric,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  unique (restaurant_id, name)
+);
+
+create index if not exists idx_ingredients_restaurant on public.ingredients(restaurant_id, name);
+
+-- ============================================================
+-- 11b. stock_movements — audit log for every stock change
+-- ============================================================
+create table if not exists public.stock_movements (
+  id bigserial primary key,
+  ingredient_id uuid not null references public.ingredients(id) on delete cascade,
+  restaurant_id text not null references public.parameters(restaurant_id) on delete cascade,
+  type text not null check (type in ('order', 'waste', 'restock', 'adjustment', 'opening')),
+  quantity_change numeric not null,
+  reason text,
+  order_id bigint references public.orders(id) on delete set null,
+  user_id uuid references public.users(id) on delete set null,
+  before_quantity numeric,
+  after_quantity numeric,
+  created_at timestamptz default now()
+);
+
+create index if not exists idx_stock_movements_ingredient on public.stock_movements(ingredient_id, created_at desc);
+create index if not exists idx_stock_movements_restaurant_created on public.stock_movements(restaurant_id, created_at desc);
+
+-- ============================================================
+-- 11c. recipes — how much of each ingredient a menu item uses
+-- ============================================================
+create table if not exists public.recipes (
+  id uuid primary key default gen_random_uuid(),
+  menu_item_id uuid not null references public.menu(id) on delete cascade,
+  ingredient_id uuid not null references public.ingredients(id) on delete cascade,
+  quantity_required numeric not null default 1,
+  unique (menu_item_id, ingredient_id)
+);
+
+create index if not exists idx_recipes_menu_item on public.recipes(menu_item_id);
+create index if not exists idx_recipes_ingredient on public.recipes(ingredient_id);
+
+-- ============================================================
+-- 12. profiles — user profiles
 -- ============================================================
 create table if not exists public.profiles (
   id uuid primary key default gen_random_uuid(),
@@ -265,6 +322,9 @@ alter table public.payment_methods enable row level security;
 alter table public.payment_history enable row level security;
 alter table public.profiles enable row level security;
 alter table public.subscription_notifications enable row level security;
+alter table public.ingredients enable row level security;
+alter table public.stock_movements enable row level security;
+alter table public.recipes enable row level security;
 
 do $$
 begin
@@ -384,16 +444,50 @@ begin
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'subscription_notifications' and policyname = 'open_insert_subscription_notifications') then
     create policy open_insert_subscription_notifications on public.subscription_notifications for insert to anon, authenticated with check (true);
   end if;
+
+  -- ingredients
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'ingredients' and policyname = 'open_select_ingredients') then
+    create policy open_select_ingredients on public.ingredients for select to anon, authenticated using (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'ingredients' and policyname = 'open_insert_ingredients') then
+    create policy open_insert_ingredients on public.ingredients for insert to anon, authenticated with check (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'ingredients' and policyname = 'open_update_ingredients') then
+    create policy open_update_ingredients on public.ingredients for update to anon, authenticated using (true) with check (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'ingredients' and policyname = 'open_delete_ingredients') then
+    create policy open_delete_ingredients on public.ingredients for delete to anon, authenticated using (true);
+  end if;
+
+  -- stock_movements
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'stock_movements' and policyname = 'open_select_stock_movements') then
+    create policy open_select_stock_movements on public.stock_movements for select to anon, authenticated using (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'stock_movements' and policyname = 'open_insert_stock_movements') then
+    create policy open_insert_stock_movements on public.stock_movements for insert to anon, authenticated with check (true);
+  end if;
+
+  -- recipes
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'recipes' and policyname = 'open_select_recipes') then
+    create policy open_select_recipes on public.recipes for select to anon, authenticated using (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'recipes' and policyname = 'open_insert_recipes') then
+    create policy open_insert_recipes on public.recipes for insert to anon, authenticated with check (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'recipes' and policyname = 'open_update_recipes') then
+    create policy open_update_recipes on public.recipes for update to anon, authenticated using (true) with check (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'recipes' and policyname = 'open_delete_recipes') then
+    create policy open_delete_recipes on public.recipes for delete to anon, authenticated using (true);
+  end if;
 end $$;
 
 -- ============================================================
 -- 10. Seed default subscription plans (adjust prices as needed)
 -- ============================================================
-insert into public.subscription_plans (name, duration_days, price) values
-  ('1 Month', 30, 299),
-  ('3 Months', 90, 799),
-  ('6 Months', 180, 1499),
-  ('12 Months', 365, 2499)
+insert into public.subscription_plans (name, duration_days, price, currency, is_active, country_code, plan_code) values
+  ('Monthly Plan', 30, 999, 'INR', true, 'IN', 'MONTHLY'),
+  ('Annual Plan', 365, 9999, 'INR', true, 'IN', 'ANNUAL')
 on conflict do nothing;
 
 insert into public.payment_methods (name) values ('card'), ('netbanking'), ('upi'), ('cash')

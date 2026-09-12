@@ -42,6 +42,7 @@ interface POSState {
   selectedTab: number;
   activeOrders: ActiveOrder[];
   activeOrdersLoading: boolean;
+  lastStockAlerts: StockAlert[];
   setSelectedTable: (table: number, restaurantId?: string) => void;
   setSelectedTab: (tab: number, restaurantId?: string) => void;
   fetchActiveOrders: (restaurantId: string, tableNumber: number, tabNumber: number) => Promise<void>;
@@ -80,10 +81,241 @@ interface POSState {
   }) => Promise<any>;
   lookupCustomerByPhone: (restaurantId: string, phone: string) => Promise<{ name: string; phone: string; email: string | null; address: string | null } | null>;
   upsertCustomer: (restaurantId: string, customer: { name: string; phone: string; email?: string; address?: string }) => Promise<void>;
+  clearStockAlerts: () => void;
 }
 
 let currentRestaurantId: string | null = null;
 let activeOrdersFetchGeneration = 0;
+
+interface OrderItemLike {
+  name: string;
+  quantity: number;
+}
+
+export interface StockAlert {
+  ingredientId: string;
+  ingredientName: string;
+  unit: string;
+  before: number;
+  after: number;
+  needed: number;
+  severity: 'negative' | 'critical';
+}
+
+export interface MenuItemStockStatus {
+  menuItemId: string;
+  menuItemName: string;
+  available: boolean;
+  missingIngredients: { name: string; unit: string; needed: number; available: number }[];
+}
+
+async function deductIngredientsForOrder(
+  restaurantId: string,
+  items: OrderItemLike[],
+  orderId: number,
+  orderStatus: string
+): Promise<StockAlert[]> {
+  const alerts: StockAlert[] = [];
+  const names = items.map((i) => i.name).filter(Boolean);
+  if (names.length === 0) return alerts;
+
+  const { data: menuRows, error: menuErr } = await supabase
+    .from('menu')
+    .select('id, name')
+    .eq('restaurant_id', restaurantId)
+    .in('name', names);
+  if (menuErr) throw menuErr;
+
+  const nameToMenuId = new Map<string, string>();
+  (menuRows || []).forEach((m: any) => {
+    const existing = nameToMenuId.get(m.name);
+    if (!existing) nameToMenuId.set(m.name, m.id);
+  });
+
+  const menuIds = Array.from(nameToMenuId.values());
+  if (menuIds.length === 0) return alerts;
+
+  const { data: recipeRows, error: recipeErr } = await supabase
+    .from('recipes')
+    .select('menu_item_id, ingredient_id, quantity_required')
+    .in('menu_item_id', menuIds);
+  if (recipeErr) throw recipeErr;
+
+  if (!recipeRows || recipeRows.length === 0) return alerts;
+
+  // Aggregate total ingredient qty needed across all ordered items
+  const ingredientNeed = new Map<string, number>();
+  items.forEach((item) => {
+    const menuId = nameToMenuId.get(item.name);
+    if (!menuId) return;
+    recipeRows
+      .filter((r: any) => r.menu_item_id === menuId)
+      .forEach((r: any) => {
+        const qty = Number(r.quantity_required || 0) * Number(item.quantity || 1);
+        ingredientNeed.set(r.ingredient_id, (ingredientNeed.get(r.ingredient_id) || 0) + qty);
+      });
+  });
+
+  if (ingredientNeed.size === 0) return alerts;
+
+  const ingredientIds = Array.from(ingredientNeed.keys());
+  const { data: ingRows, error: ingErr } = await supabase
+    .from('ingredients')
+    .select('id, name, unit, current_stock, critical_threshold')
+    .eq('restaurant_id', restaurantId)
+    .in('id', ingredientIds);
+  if (ingErr) throw ingErr;
+
+  const ingMap = new Map<string, { name: string; unit: string; current_stock: number; critical_threshold: number }>();
+  (ingRows || []).forEach((i: any) => ingMap.set(i.id, i));
+
+  // Deduct each ingredient (stock can go negative to reflect over-deduction)
+  for (const [ingredientId, needed] of ingredientNeed.entries()) {
+    const ing = ingMap.get(ingredientId);
+    const before = ing ? Number(ing.current_stock || 0) : 0;
+    const change = -Math.abs(needed);
+    const after = before + change;
+
+    const { error: mErr } = await supabase.from('stock_movements').insert({
+      ingredient_id: ingredientId,
+      restaurant_id: restaurantId,
+      type: 'order',
+      quantity_change: change,
+      reason: `Order #${orderId}${orderStatus && orderStatus !== 'pending' ? ` (${orderStatus})` : ''}`,
+      order_id: orderId,
+      before_quantity: before,
+      after_quantity: after,
+    });
+    if (mErr) throw mErr;
+
+    const { error: uErr } = await supabase
+      .from('ingredients')
+      .update({ current_stock: after })
+      .eq('id', ingredientId);
+    if (uErr) throw uErr;
+
+    // Generate alerts for negative or critical stock
+    if (ing) {
+      const criticalThresh = Number(ing.critical_threshold || 0);
+      if (after < 0) {
+        alerts.push({
+          ingredientId,
+          ingredientName: ing.name,
+          unit: ing.unit,
+          before,
+          after,
+          needed,
+          severity: 'negative',
+        });
+      } else if (criticalThresh > 0 && after <= criticalThresh) {
+        alerts.push({
+          ingredientId,
+          ingredientName: ing.name,
+          unit: ing.unit,
+          before,
+          after,
+          needed,
+          severity: 'critical',
+        });
+      }
+    }
+  }
+
+  return alerts;
+}
+
+/**
+ * Check whether all menu items in an order can be fulfilled with current stock.
+ * Returns per-item availability info so the UI can show unavailable items.
+ */
+export async function checkMenuItemsStock(
+  restaurantId: string,
+  items: OrderItemLike[]
+): Promise<MenuItemStockStatus[]> {
+  const names = items.map((i) => i.name).filter(Boolean);
+  if (names.length === 0) return [];
+
+  const { data: menuRows, error: menuErr } = await supabase
+    .from('menu')
+    .select('id, name')
+    .eq('restaurant_id', restaurantId)
+    .in('name', names);
+  if (menuErr) throw menuErr;
+
+  const nameToMenuId = new Map<string, string>();
+  (menuRows || []).forEach((m: any) => {
+    const existing = nameToMenuId.get(m.name);
+    if (!existing) nameToMenuId.set(m.name, m.id);
+  });
+
+  const menuIds = Array.from(nameToMenuId.values());
+  if (menuIds.length === 0) return items.map((i) => ({ menuItemId: '', menuItemName: i.name, available: true, missingIngredients: [] }));
+
+  const { data: recipeRows, error: recipeErr } = await supabase
+    .from('recipes')
+    .select('menu_item_id, ingredient_id, quantity_required')
+    .in('menu_item_id', menuIds);
+  if (recipeErr) throw recipeErr;
+
+  if (!recipeRows || recipeRows.length === 0) {
+    return items.map((i) => ({ menuItemId: nameToMenuId.get(i.name) || '', menuItemName: i.name, available: true, missingIngredients: [] }));
+  }
+
+  const allIngIds = [...new Set(recipeRows.map((r: any) => r.ingredient_id))];
+  const { data: ingRows, error: ingErr } = await supabase
+    .from('ingredients')
+    .select('id, name, unit, current_stock')
+    .eq('restaurant_id', restaurantId)
+    .in('id', allIngIds);
+  if (ingErr) throw ingErr;
+
+  const ingMap = new Map<string, { name: string; unit: string; current_stock: number }>();
+  (ingRows || []).forEach((i: any) => ingMap.set(i.id, i));
+
+  // Track cumulative deductions so multiple orders of the same item are checked correctly
+  const cumulativeDeduction = new Map<string, number>();
+
+  return items.map((item) => {
+    const menuId = nameToMenuId.get(item.name);
+    if (!menuId) return { menuItemId: '', menuItemName: item.name, available: true, missingIngredients: [] };
+
+    const itemRecipes = recipeRows.filter((r: any) => r.menu_item_id === menuId);
+    const missingIngredients: { name: string; unit: string; needed: number; available: number }[] = [];
+
+    for (const r of itemRecipes) {
+      const ing = ingMap.get(r.ingredient_id);
+      if (!ing) continue;
+      const needed = Number(r.quantity_required || 0) * Number(item.quantity || 1);
+      const alreadyDeducted = cumulativeDeduction.get(r.ingredient_id) || 0;
+      const currentStock = Number(ing.current_stock || 0) - alreadyDeducted;
+
+      if (currentStock < needed && currentStock > 0) {
+        missingIngredients.push({
+          name: ing.name,
+          unit: ing.unit,
+          needed,
+          available: Math.max(0, currentStock),
+        });
+      } else if (currentStock <= 0) {
+        missingIngredients.push({
+          name: ing.name,
+          unit: ing.unit,
+          needed,
+          available: 0,
+        });
+      }
+
+      cumulativeDeduction.set(r.ingredient_id, alreadyDeducted + needed);
+    }
+
+    return {
+      menuItemId: menuId,
+      menuItemName: item.name,
+      available: missingIngredients.length === 0,
+      missingIngredients,
+    };
+  });
+}
 
 export const usePOSStore = create<POSState>((set, get) => ({
   products: [],
@@ -93,6 +325,7 @@ export const usePOSStore = create<POSState>((set, get) => ({
   selectedTab: 1,
   activeOrders: [],
   activeOrdersLoading: false,
+  lastStockAlerts: [],
 
   setSelectedTable: (table: number, restaurantId?: string) => {
     set({ selectedTable: table, selectedTab: 1 });
@@ -283,6 +516,18 @@ export const usePOSStore = create<POSState>((set, get) => ({
       throw error;
     }
 
+    // Auto-deduct ingredient stock based on recipe mappings
+    if (orderData.restaurant_id && !orderData.status?.startsWith('settled')) {
+      try {
+        const stockAlerts = await deductIngredientsForOrder(orderData.restaurant_id, orderData.items, data.id, orderData.status || 'pending');
+        if (stockAlerts.length > 0) {
+          set({ lastStockAlerts: stockAlerts });
+        }
+      } catch (err) {
+        console.error('Error deducting ingredients for order:', err);
+      }
+    }
+
     // After creating, refresh active orders for this tab
     if (orderData.restaurant_id) {
       get().fetchActiveOrders(orderData.restaurant_id, tableNumber, tabNumber);
@@ -327,4 +572,62 @@ export const usePOSStore = create<POSState>((set, get) => ({
       console.error('Error upserting customer:', err);
     }
   },
+
+  clearStockAlerts: () => set({ lastStockAlerts: [] }),
 }));
+
+/**
+ * Check stock availability for all menu items of a restaurant.
+ * Returns a Map of menu item name -> whether it can be fulfilled.
+ */
+export async function checkAllMenuItemsStock(
+  restaurantId: string
+): Promise<Map<string, boolean>> {
+  const availabilityMap = new Map<string, boolean>();
+
+  const { data: menuRows, error: menuErr } = await supabase
+    .from('menu')
+    .select('id, name')
+    .eq('restaurant_id', restaurantId)
+    .eq('available', true);
+  if (menuErr || !menuRows || menuRows.length === 0) return availabilityMap;
+
+  const menuIds = menuRows.map((m) => m.id);
+  const nameToMenuId = new Map<string, string>();
+  menuRows.forEach((m: any) => nameToMenuId.set(m.name, m.id));
+
+  const { data: recipeRows } = await supabase
+    .from('recipes')
+    .select('menu_item_id, ingredient_id, quantity_required')
+    .in('menu_item_id', menuIds);
+
+  if (!recipeRows || recipeRows.length === 0) {
+    menuRows.forEach((m: any) => availabilityMap.set(m.name, true));
+    return availabilityMap;
+  }
+
+  const allIngIds = [...new Set(recipeRows.map((r: any) => r.ingredient_id))];
+  const { data: ingRows } = await supabase
+    .from('ingredients')
+    .select('id, current_stock')
+    .eq('restaurant_id', restaurantId)
+    .in('id', allIngIds);
+
+  const ingStock = new Map<string, number>();
+  (ingRows || []).forEach((i: any) => ingStock.set(i.id, Number(i.current_stock || 0)));
+
+  for (const menuRow of menuRows) {
+    const itemRecipes = recipeRows.filter((r: any) => r.menu_item_id === menuRow.id);
+    if (itemRecipes.length === 0) {
+      availabilityMap.set(menuRow.name, true);
+      continue;
+    }
+    const canFulfill = itemRecipes.every((r: any) => {
+      const stock = ingStock.get(r.ingredient_id) || 0;
+      return stock >= Number(r.quantity_required || 0);
+    });
+    availabilityMap.set(menuRow.name, canFulfill);
+  }
+
+  return availabilityMap;
+}

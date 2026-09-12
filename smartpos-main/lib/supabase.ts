@@ -388,6 +388,98 @@ export type Database = {
           verified?: boolean;
         };
       };
+      ingredients: {
+        Row: {
+          id: string;
+          restaurant_id: string;
+          name: string;
+          category: string;
+          unit: string;
+          current_stock: number;
+          reorder_level: number;
+          low_threshold: number;
+          critical_threshold: number;
+          supplier_name: string | null;
+          supplier_contact: string | null;
+          cost_per_unit: number | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          restaurant_id: string;
+          name: string;
+          category?: string;
+          unit?: string;
+          current_stock?: number;
+          reorder_level?: number;
+          low_threshold?: number;
+          critical_threshold?: number;
+          supplier_name?: string | null;
+          supplier_contact?: string | null;
+          cost_per_unit?: number | null;
+          updated_at?: string;
+        };
+        Update: {
+          name?: string;
+          category?: string;
+          unit?: string;
+          current_stock?: number;
+          reorder_level?: number;
+          low_threshold?: number;
+          critical_threshold?: number;
+          supplier_name?: string | null;
+          supplier_contact?: string | null;
+          cost_per_unit?: number | null;
+          updated_at?: string;
+        };
+      };
+      stock_movements: {
+        Row: {
+          id: number;
+          ingredient_id: string;
+          restaurant_id: string;
+          type: string;
+          quantity_change: number;
+          reason: string | null;
+          order_id: number | null;
+          user_id: string | null;
+          before_quantity: number | null;
+          after_quantity: number | null;
+          created_at: string;
+        };
+        Insert: {
+          ingredient_id: string;
+          restaurant_id: string;
+          type: string;
+          quantity_change: number;
+          reason?: string | null;
+          order_id?: number | null;
+          user_id?: string | null;
+          before_quantity?: number | null;
+          after_quantity?: number | null;
+        };
+        Update: {
+          reason?: string | null;
+        };
+      };
+      recipes: {
+        Row: {
+          id: string;
+          menu_item_id: string;
+          ingredient_id: string;
+          quantity_required: number;
+        };
+        Insert: {
+          id?: string;
+          menu_item_id: string;
+          ingredient_id: string;
+          quantity_required?: number;
+        };
+        Update: {
+          quantity_required?: number;
+        };
+      };
     };
   };
 };

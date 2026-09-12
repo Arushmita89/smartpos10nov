@@ -419,7 +419,11 @@ export default function Home() {
             </div>
           </div>
 
-          <p className="text-center text-sm text-gray-400 mt-8">
+          <p className="text-center text-xs text-gray-400 mt-6">
+            Subject to change according to restaurant size and number of tables. These charges are for up to a table number of 10.
+          </p>
+
+          <p className="text-center text-sm text-gray-400 mt-4">
             <Lock className="inline h-3.5 w-3.5 mr-1 -mt-0.5" />
             Secure Payments &nbsp;|&nbsp; 100% Safe &amp; Encrypted
           </p>

@@ -309,7 +309,7 @@ export default function PlanCodesManager() {
               <label className="block text-xs font-medium text-gray-500 mb-1">Plan Name *</label>
               <input
                 type="text"
-                placeholder="e.g. 1 Month"
+                placeholder="e.g. Monthly Plan"
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
