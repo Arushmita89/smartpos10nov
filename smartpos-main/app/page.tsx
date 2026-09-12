@@ -29,6 +29,7 @@ import {
   X,
 } from 'lucide-react';
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { CURRENCIES } from '@/app/features/owner/currencyData';
 
 const navLinks = [
   { label: 'Home', href: '/' },
@@ -93,10 +94,32 @@ const annualChecks = [
   'Free Setup Assistance',
 ];
 
+interface LandingPricing {
+  country: string;
+  currency: string;
+  locale: string;
+  monthly: number;
+  annual: number;
+  note: string | null;
+}
+
+function formatPlanPrice(amount: number, locale: string, currency: string) {
+  try {
+    return new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency,
+      maximumFractionDigits: 0,
+    }).format(amount);
+  } catch {
+    return `${currency} ${amount.toLocaleString('en')}`;
+  }
+}
+
 export default function Home() {
   const { restaurant, subscription, loading } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [activeSection, setActiveSection] = useState('/');
+  const [pricing, setPricing] = useState<LandingPricing | null>(null);
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
 
   const setSectionRef = useCallback((id: string) => (el: HTMLElement | null) => {
@@ -125,6 +148,30 @@ export default function Home() {
 
     return () => observer.disconnect();
   }, [restaurant, subscription, loading]);
+
+  useEffect(() => {
+    fetch('/api/landing-plans')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data && typeof data.monthly === 'number' && typeof data.annual === 'number') {
+          setPricing(data);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleCurrencyChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const currency = e.target.value;
+    setPricing(null);
+    fetch(`/api/landing-plans?currency=${currency}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data && typeof data.monthly === 'number' && typeof data.annual === 'number') {
+          setPricing(data);
+        }
+      })
+      .catch(() => {});
+  };
 
   if (loading) {
     return (
@@ -353,9 +400,26 @@ export default function Home() {
           <h2 className="text-3xl lg:text-4xl font-bold text-[#0B1B3A] text-center mb-3">
             Simple &amp; Affordable Pricing
           </h2>
-          <p className="text-gray-500 text-center mb-14 max-w-xl mx-auto">
+          <p className="text-gray-500 text-center mb-8 max-w-xl mx-auto">
             Choose the plan that works best for your restaurant.
           </p>
+
+          <div className="flex justify-center mb-8">
+            <label className="inline-flex items-center gap-2 text-sm text-gray-600">
+              <span className="font-medium">Currency:</span>
+              <select
+                value={pricing?.currency || 'INR'}
+                onChange={handleCurrencyChange}
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm font-medium text-[#0B1B3A] bg-white focus:outline-none focus:ring-2 focus:ring-[#1E5FE8] focus:border-[#1E5FE8] cursor-pointer"
+              >
+                {CURRENCIES.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.code} - {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-8 max-w-3xl mx-auto">
             {/* Monthly */}
@@ -364,7 +428,11 @@ export default function Home() {
                 Monthly Plan
               </p>
               <div className="flex items-baseline gap-1 mb-2">
-                <span className="text-4xl font-bold text-[#0B1B3A]">₹999</span>
+                <span className="text-4xl font-bold text-[#0B1B3A]">
+                  {pricing
+                    ? formatPlanPrice(pricing.monthly, pricing.locale, pricing.currency)
+                    : '₹999'}
+                </span>
                 <span className="text-gray-400">/month</span>
               </div>
               <p className="text-sm text-gray-400 mb-6">
@@ -396,7 +464,11 @@ export default function Home() {
                 Annual Plan
               </p>
               <div className="flex items-baseline gap-1 mb-2">
-                <span className="text-4xl font-bold text-[#0B1B3A]">₹9,999</span>
+                <span className="text-4xl font-bold text-[#0B1B3A]">
+                  {pricing
+                    ? formatPlanPrice(pricing.annual, pricing.locale, pricing.currency)
+                    : '₹9,999'}
+                </span>
                 <span className="text-gray-400">/year</span>
               </div>
               <p className="text-sm text-gray-400 mb-6">
@@ -418,6 +490,10 @@ export default function Home() {
               </Link>
             </div>
           </div>
+
+          {pricing?.note && (
+            <p className="text-center text-xs text-gray-400 mt-4">{pricing.note}</p>
+          )}
 
           <p className="text-center text-xs text-gray-400 mt-6">
             Subject to change according to restaurant size and number of tables. These charges are for up to a table number of 10.
