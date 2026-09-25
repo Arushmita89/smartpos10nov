@@ -11,3 +11,4 @@ SmartPOS — point-of-sale platform.
 ## Status
 
 Branches `main` and `no-docx` have diverged and are not yet reconciled.
+"# smartpos25092026" 
