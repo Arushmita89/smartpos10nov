@@ -1,8 +1,4 @@
-docs/
-documentation/
-test/
-SmartPOS-Documentation*.docx
+# docs/, test/, and .vercel/ are intentionally tracked.
+# Only real secrets and build artifacts are excluded.
 .env
-
-.vercel
 .env*

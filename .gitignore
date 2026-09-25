@@ -26,4 +26,5 @@ Thumbs.db
 ~$*
 
 # Office documents
-*.docx
+# *.docx intentionally NOT ignored - project docs are tracked.
+# Office lock files (~$*) remain ignored above.
