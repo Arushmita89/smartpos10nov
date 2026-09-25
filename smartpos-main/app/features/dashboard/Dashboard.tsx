@@ -12,6 +12,7 @@ import RestaurantDashboard from '@/components/dashboard/RestaurantDashboard';
 import MenuManagement from '@/components/dashboard/MenuManagement';
 import InventoryManagement from '@/components/dashboard/InventoryManagement';
 import CustomerManagement from '@/components/dashboard/CustomerManagement';
+import PromotionManagement from '@/components/dashboard/PromotionManagement';
 import UserManagement from '@/components/dashboard/UserManagement';
 import MPINAuth from '@/components/auth/MPINAuth';
 import NotificationBell from '@/components/subscription/NotificationBell';
@@ -35,6 +36,7 @@ import {
   Shield,
   Tag,
   X,
+  Megaphone,
 } from 'lucide-react';
 
 type RoleAccess = {
@@ -52,6 +54,7 @@ const ROLE_ACCESS: Record<UserRole, RoleAccess> = {
       'menu',
       'inventory',
       'customers',
+      'promotions',
       'reports',
       'settings',
       'users',
@@ -219,6 +222,7 @@ export default function Dashboard() {
     { id: 'menu', name: 'Menu Management', icon: BookOpen },
     { id: 'inventory', name: 'Inventory', icon: Package },
     { id: 'customers', name: 'Customers', icon: Users },
+    { id: 'promotions', name: 'Promotions', icon: Megaphone },
     { id: 'reports', name: 'Reports', icon: BarChart3 },
     { id: 'settings', name: 'Settings', icon: Settings },
     { id: 'users', name: 'Users', icon: User },
@@ -468,6 +472,7 @@ export default function Dashboard() {
           {activeSection === 'menu' && <MenuManagement restaurant={restaurant} />}
           {activeSection === 'inventory' && <InventoryManagement restaurant={restaurant} />}
           {activeSection === 'customers' && <CustomerManagement restaurant={restaurant} />}
+          {activeSection === 'promotions' && <PromotionManagement restaurant={restaurant} />}
           {activeSection === 'reports' && <Analytics restaurant={restaurant} />}
           {activeSection === 'settings' && (
             <RestaurantDashboard />

@@ -200,6 +200,10 @@ export type Database = {
           tab_number: number | null;
           created_at: string;
           updated_at: string;
+          discount_amount: number;
+          promo_code: string | null;
+          loyalty_points_redeemed: number;
+          loyalty_points_earned: number;
         };
         Insert: {
           restaurant_id: string;
@@ -219,6 +223,10 @@ export type Database = {
           estimated_delivery_time?: number | null;
           table_number?: number | null;
           tab_number?: number | null;
+          discount_amount?: number;
+          promo_code?: string | null;
+          loyalty_points_redeemed?: number;
+          loyalty_points_earned?: number;
         };
         Update: {
           status?: string;
@@ -226,6 +234,10 @@ export type Database = {
           table_number?: number | null;
           tab_number?: number | null;
           estimated_delivery_time?: number | null;
+          discount_amount?: number;
+          promo_code?: string | null;
+          loyalty_points_redeemed?: number;
+          loyalty_points_earned?: number;
         };
       };
       customers: {
@@ -236,6 +248,8 @@ export type Database = {
           phone: string;
           email: string | null;
           address: string | null;
+          birthday: string | null;
+          loyalty_points: number;
           created_at: string;
           updated_at: string;
         };
@@ -245,11 +259,288 @@ export type Database = {
           phone: string;
           email?: string | null;
           address?: string | null;
+          birthday?: string | null;
+          loyalty_points?: number;
         };
         Update: {
           name?: string;
           email?: string | null;
           address?: string | null;
+          birthday?: string | null;
+          loyalty_points?: number;
+        };
+      };
+      customer_segments: {
+        Row: {
+          id: number;
+          restaurant_id: string;
+          name: string;
+          description: string | null;
+          rules: Record<string, any>;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          restaurant_id: string;
+          name: string;
+          description?: string | null;
+          rules?: Record<string, any>;
+        };
+        Update: {
+          name?: string;
+          description?: string | null;
+          rules?: Record<string, any>;
+        };
+      };
+      coupons: {
+        Row: {
+          id: number;
+          restaurant_id: string;
+          code: string;
+          description: string | null;
+          discount_type: string;
+          discount_value: number;
+          min_bill: number;
+          max_discount: number | null;
+          scope_item_name: string | null;
+          max_uses: number | null;
+          per_customer_limit: number;
+          starts_at: string | null;
+          ends_at: string | null;
+          redemption_count: number;
+          is_active: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          restaurant_id: string;
+          code: string;
+          description?: string | null;
+          discount_type?: string;
+          discount_value?: number;
+          min_bill?: number;
+          max_discount?: number | null;
+          scope_item_name?: string | null;
+          max_uses?: number | null;
+          per_customer_limit?: number;
+          starts_at?: string | null;
+          ends_at?: string | null;
+          redemption_count?: number;
+          is_active?: boolean;
+        };
+        Update: {
+          code?: string;
+          description?: string | null;
+          discount_type?: string;
+          discount_value?: number;
+          min_bill?: number;
+          max_discount?: number | null;
+          scope_item_name?: string | null;
+          max_uses?: number | null;
+          per_customer_limit?: number;
+          starts_at?: string | null;
+          ends_at?: string | null;
+          redemption_count?: number;
+          is_active?: boolean;
+        };
+      };
+      campaigns: {
+        Row: {
+          id: number;
+          restaurant_id: string;
+          name: string;
+          segment_id: number | null;
+          segment_key: string | null;
+          coupon_id: number | null;
+          channel: string;
+          subject: string | null;
+          message: string;
+          source: string;
+          trigger_type: string | null;
+          status: string;
+          scheduled_at: string | null;
+          sent_at: string | null;
+          audience_count: number;
+          delivered_count: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          restaurant_id: string;
+          name: string;
+          segment_id?: number | null;
+          segment_key?: string | null;
+          coupon_id?: number | null;
+          channel: string;
+          subject?: string | null;
+          message: string;
+          source?: string;
+          trigger_type?: string | null;
+          status?: string;
+          scheduled_at?: string | null;
+          sent_at?: string | null;
+          audience_count?: number;
+          delivered_count?: number;
+        };
+        Update: {
+          name?: string;
+          segment_id?: number | null;
+          segment_key?: string | null;
+          coupon_id?: number | null;
+          channel?: string;
+          subject?: string | null;
+          message?: string;
+          trigger_type?: string | null;
+          status?: string;
+          scheduled_at?: string | null;
+          sent_at?: string | null;
+          audience_count?: number;
+          delivered_count?: number;
+        };
+      };
+      campaign_deliveries: {
+        Row: {
+          id: number;
+          campaign_id: number;
+          restaurant_id: string;
+          customer_id: number | null;
+          customer_name: string | null;
+          recipient: string;
+          channel: string;
+          status: string;
+          error: string | null;
+          message: string | null;
+          sent_at: string | null;
+          created_at: string;
+        };
+        Insert: {
+          campaign_id: number;
+          restaurant_id: string;
+          customer_id?: number | null;
+          customer_name?: string | null;
+          recipient: string;
+          channel: string;
+          status?: string;
+          error?: string | null;
+          message?: string | null;
+          sent_at?: string | null;
+        };
+        Update: {
+          status?: string;
+          error?: string | null;
+          sent_at?: string | null;
+        };
+      };
+      promotion_redemptions: {
+        Row: {
+          id: number;
+          restaurant_id: string;
+          coupon_id: number;
+          campaign_id: number | null;
+          order_id: number | null;
+          customer_phone: string | null;
+          discount_amount: number;
+          order_total: number;
+          created_at: string;
+        };
+        Insert: {
+          restaurant_id: string;
+          coupon_id: number;
+          campaign_id?: number | null;
+          order_id?: number | null;
+          customer_phone?: string | null;
+          discount_amount?: number;
+          order_total?: number;
+        };
+        Update: {
+          campaign_id?: number | null;
+          discount_amount?: number;
+          order_total?: number;
+        };
+      };
+      loyalty_settings: {
+        Row: {
+          restaurant_id: string;
+          enabled: boolean;
+          currency_per_point: number;
+          point_value: number;
+          min_redeem_points: number;
+          max_redeem_percent: number;
+          updated_at: string;
+        };
+        Insert: {
+          restaurant_id: string;
+          enabled?: boolean;
+          currency_per_point?: number;
+          point_value?: number;
+          min_redeem_points?: number;
+          max_redeem_percent?: number;
+        };
+        Update: {
+          enabled?: boolean;
+          currency_per_point?: number;
+          point_value?: number;
+          min_redeem_points?: number;
+          max_redeem_percent?: number;
+        };
+      };
+      loyalty_transactions: {
+        Row: {
+          id: number;
+          restaurant_id: string;
+          customer_phone: string;
+          points: number;
+          type: string;
+          order_id: number | null;
+          coupon_id: number | null;
+          note: string | null;
+          balance_after: number | null;
+          created_at: string;
+        };
+        Insert: {
+          restaurant_id: string;
+          customer_phone: string;
+          points: number;
+          type: string;
+          order_id?: number | null;
+          coupon_id?: number | null;
+          note?: string | null;
+          balance_after?: number | null;
+        };
+        Update: {
+          points?: number;
+          type?: string;
+          note?: string | null;
+        };
+      };
+      automations: {
+        Row: {
+          id: number;
+          restaurant_id: string;
+          trigger_type: string;
+          channel: string;
+          coupon_id: number | null;
+          message: string;
+          is_active: boolean;
+          last_run_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          restaurant_id: string;
+          trigger_type: string;
+          channel?: string;
+          coupon_id?: number | null;
+          message: string;
+          is_active?: boolean;
+          last_run_at?: string | null;
+        };
+        Update: {
+          channel?: string;
+          coupon_id?: number | null;
+          message?: string;
+          is_active?: boolean;
+          last_run_at?: string | null;
         };
       };
       subscription_plans: {

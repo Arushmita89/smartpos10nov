@@ -78,8 +78,12 @@ interface POSState {
     tab_number?: number;
     estimated_delivery_time?: number | null;
     status?: string;
+    discount_amount?: number;
+    promo_code?: string | null;
+    loyalty_points_redeemed?: number;
+    loyalty_points_earned?: number;
   }) => Promise<any>;
-  lookupCustomerByPhone: (restaurantId: string, phone: string) => Promise<{ name: string; phone: string; email: string | null; address: string | null } | null>;
+  lookupCustomerByPhone: (restaurantId: string, phone: string) => Promise<{ name: string; phone: string; email: string | null; address: string | null; loyalty_points?: number | null; birthday?: string | null } | null>;
   upsertCustomer: (restaurantId: string, customer: { name: string; phone: string; email?: string; address?: string }) => Promise<void>;
   clearStockAlerts: () => void;
 }
@@ -507,6 +511,10 @@ export const usePOSStore = create<POSState>((set, get) => ({
         table_number: tableNumber,
         tab_number: tabNumber,
         estimated_delivery_time: orderData.estimated_delivery_time || null,
+        discount_amount: orderData.discount_amount || 0,
+        promo_code: orderData.promo_code || null,
+        loyalty_points_redeemed: orderData.loyalty_points_redeemed || 0,
+        loyalty_points_earned: orderData.loyalty_points_earned || 0,
       })
       .select()
       .single();
@@ -540,7 +548,7 @@ export const usePOSStore = create<POSState>((set, get) => ({
     try {
       const { data, error } = await supabase
         .from('customers')
-        .select('name, phone, email, address')
+        .select('name, phone, email, address, loyalty_points, birthday')
         .eq('restaurant_id', restaurantId)
         .eq('phone', phone)
         .maybeSingle();

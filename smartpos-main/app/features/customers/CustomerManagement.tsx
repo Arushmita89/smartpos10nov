@@ -26,12 +26,21 @@ import {
   Calendar,
   CreditCard,
   Store,
+  Gift,
+  Send,
 } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import {
+  CouponLike,
+  buildCampaignMessage,
+  defaultMessageTemplate,
+  offerLabel,
+} from "@/lib/promotions";
 
 type Restaurant = Database["public"]["Tables"]["parameters"]["Row"];
 type Customer = Database["public"]["Tables"]["customers"]["Row"];
 type Order = Database["public"]["Tables"]["orders"]["Row"];
+type Coupon = Database["public"]["Tables"]["coupons"]["Row"];
 
 type CustomerOrder = Pick<
   Order,
@@ -70,6 +79,7 @@ function CustomerModal({
   const [phone, setPhone] = useState(customer?.phone || "");
   const [email, setEmail] = useState(customer?.email || "");
   const [address, setAddress] = useState(customer?.address || "");
+  const [birthday, setBirthday] = useState(customer?.birthday || "");
   const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async () => {
@@ -93,6 +103,7 @@ function CustomerModal({
         phone: cleanedPhone,
         email: email.trim() || null,
         address: address.trim() || null,
+        birthday: birthday.trim() || null,
         updated_at: new Date().toISOString(),
       };
       if (customer?.id) {
@@ -181,6 +192,17 @@ function CustomerModal({
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
+              Birthday
+            </label>
+            <input
+              type="date"
+              value={birthday}
+              onChange={(e) => setBirthday(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
               Address
             </label>
             <textarea
@@ -223,6 +245,236 @@ function CustomerModal({
   );
 }
 
+function SendPromotionModal({
+  customer,
+  restaurant,
+  onClose,
+}: {
+  customer: Customer;
+  restaurant: Restaurant;
+  onClose: () => void;
+}) {
+  const currency = restaurant.currency || "INR";
+  const restaurantName = restaurant.restaurant_name;
+  const [coupons, setCoupons] = useState<Coupon[]>([]);
+  const [couponId, setCouponId] = useState("");
+  const [subject, setSubject] = useState("");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [loadingCoupons, setLoadingCoupons] = useState(true);
+
+  const selectedCoupon = couponId
+    ? coupons.find((c) => c.id === Number(couponId)) || null
+    : null;
+
+  const suggestMessage = useCallback(
+    (coupon: CouponLike | null) =>
+      buildCampaignMessage({
+        template: defaultMessageTemplate(coupon, currency),
+        customerName: customer.name,
+        restaurantName,
+        coupon,
+        currency,
+      }),
+    [customer.name, currency, restaurantName]
+  );
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("coupons")
+          .select("*")
+          .eq("restaurant_id", restaurant.restaurant_id)
+          .eq("is_active", true)
+          .order("created_at", { ascending: false });
+        if (error) throw error;
+        if (mounted) {
+          setCoupons(data || []);
+          setMessage(suggestMessage(null));
+        }
+      } catch (err: any) {
+        toast.error(err.message || "Failed to load coupons");
+      } finally {
+        if (mounted) setLoadingCoupons(false);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [restaurant.restaurant_id, suggestMessage]);
+
+  const handleSend = async () => {
+    if (!message.trim()) {
+      toast.error("Message is required");
+      return;
+    }
+    const email = (customer.email || "").trim();
+    if (!email) {
+      toast.error("This customer has no email address");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const recipient = email;
+      const { data: campaign, error: insertErr } = await supabase
+        .from("campaigns")
+        .insert({
+          restaurant_id: restaurant.restaurant_id,
+          name: `${customer.name || "Customer"} — personal offer`,
+          coupon_id: selectedCoupon ? selectedCoupon.id : null,
+          channel: "email",
+          subject: subject.trim() || null,
+          message: message.trim(),
+          source: "manual",
+          status: "draft",
+          audience_count: 1,
+        })
+        .select()
+        .single();
+      if (insertErr) throw insertErr;
+
+      const res = await fetch("/api/promotions/send-campaign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          campaignId: campaign.id,
+          recipients: [
+            {
+              customer_id: customer.id,
+              name: customer.name,
+              recipient,
+            },
+          ],
+        }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Failed to send promotion");
+
+      if (result.sent > 0) {
+        toast.success(`Promotion sent to ${customer.name || "customer"} via email`);
+      } else {
+        toast.error(result.errors?.[0] || "Campaign created but message not delivered", {
+          duration: 6000,
+        });
+      }
+      onClose();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to send promotion");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg max-w-lg w-full p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-medium text-gray-900">
+            Send Promotion
+            {customer.name ? ` to ${customer.name}` : ""}
+          </h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="bg-blue-50 border border-blue-200 rounded-md px-3 py-2 mb-4 text-sm text-blue-700">
+          Will be sent to{" "}
+          <span className="font-medium">{customer.email || "—"}</span> via email
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Offer / coupon
+            </label>
+            <select
+              value={couponId}
+              onChange={(e) => {
+                setCouponId(e.target.value);
+                const c =
+                  coupons.find((x) => x.id === Number(e.target.value)) || null;
+                setMessage(suggestMessage(c));
+              }}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={loadingCoupons}
+            >
+              <option value="">No coupon</option>
+              {coupons.map((c) => (
+                <option key={c.id} value={String(c.id)}>
+                  {c.code} — {offerLabel(c as CouponLike, currency)}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Email subject
+            </label>
+            <input
+              type="text"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              placeholder="Subject shown in the customer's inbox"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Message *
+            </label>
+            <textarea
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              rows={4}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+            />
+            <button
+              type="button"
+              onClick={() => setMessage(suggestMessage(selectedCoupon))}
+              className="mt-1 text-xs text-blue-600 hover:text-blue-800"
+            >
+              Reset to suggested message
+            </button>
+          </div>
+        </div>
+
+        <div className="flex justify-end space-x-3 mt-6">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors disabled:opacity-50"
+            disabled={busy}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSend}
+            disabled={busy}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center"
+          >
+            {busy ? (
+              <>
+                <LoadingSpinner size="sm" />
+                <span className="ml-2">Sending...</span>
+              </>
+            ) : (
+              <>
+                <Send className="h-4 w-4 mr-2" />
+                Send Promotion
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function CustomerManagement({ restaurant }: CustomerManagementProps) {
   const currency = restaurant.currency || "INR";
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -235,6 +487,7 @@ export default function CustomerManagement({ restaurant }: CustomerManagementPro
   const [deletingCustomer, setDeletingCustomer] = useState<Customer | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [sendToCustomer, setSendToCustomer] = useState<Customer | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -476,6 +729,12 @@ export default function CustomerManagement({ restaurant }: CustomerManagementPro
                       {selectedCustomer.email}
                     </p>
                   )}
+                  {selectedCustomer.birthday && (
+                    <p className="text-sm text-gray-600 flex items-center">
+                      <Gift className="h-3.5 w-3.5 mr-2 text-gray-400" />
+                      Birthday: {formatDate(selectedCustomer.birthday)}
+                    </p>
+                  )}
                   {selectedCustomer.address && (
                     <p className="text-sm text-gray-600 flex items-center">
                       <MapPin className="h-3.5 w-3.5 mr-2 text-gray-400" />
@@ -486,6 +745,13 @@ export default function CustomerManagement({ restaurant }: CustomerManagementPro
               </div>
             </div>
             <div className="flex space-x-2">
+              <button
+                onClick={() => setSendToCustomer(selectedCustomer)}
+                className="inline-flex items-center px-3 py-2 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+              >
+                <Send className="h-4 w-4 mr-2" />
+                Send Promotion
+              </button>
               <button
                 onClick={() => openEditModal(selectedCustomer)}
                 className="inline-flex items-center px-3 py-2 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
@@ -791,6 +1057,13 @@ export default function CustomerManagement({ restaurant }: CustomerManagementPro
                         <Eye className="h-4 w-4" />
                       </button>
                       <button
+                        onClick={() => setSendToCustomer(customer)}
+                        className="inline-flex items-center p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-md"
+                        title="Send promotion"
+                      >
+                        <Send className="h-4 w-4" />
+                      </button>
+                      <button
                         onClick={() => openEditModal(customer)}
                         className="inline-flex items-center p-2 text-gray-500 hover:text-green-600 hover:bg-green-50 rounded-md"
                         title="Edit customer"
@@ -818,6 +1091,14 @@ export default function CustomerManagement({ restaurant }: CustomerManagementPro
           customer={editingCustomer}
           onClose={() => setShowModal(false)}
           onSaved={fetchData}
+        />
+      )}
+
+      {sendToCustomer && (
+        <SendPromotionModal
+          customer={sendToCustomer}
+          restaurant={restaurant}
+          onClose={() => setSendToCustomer(null)}
         />
       )}
 

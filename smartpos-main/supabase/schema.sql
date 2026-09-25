@@ -487,7 +487,9 @@ end $$;
 -- ============================================================
 insert into public.subscription_plans (name, duration_days, price, currency, is_active, country_code, plan_code) values
   ('Monthly Plan', 30, 999, 'INR', true, 'IN', 'MONTHLY'),
-  ('Annual Plan', 365, 9999, 'INR', true, 'IN', 'ANNUAL')
+  ('Annual Plan', 365, 9999, 'INR', true, 'IN', 'ANNUAL'),
+  ('Monthly Plan', 30, 49, 'USD', true, 'US', 'MONTHLY'),
+  ('Annual Plan', 365, 490, 'USD', true, 'US', 'ANNUAL')
 on conflict do nothing;
 
 insert into public.payment_methods (name) values ('card'), ('netbanking'), ('upi'), ('cash')
@@ -499,3 +501,311 @@ on conflict (name) do nothing;
 insert into storage.buckets (id, name, public)
 values ('menu-images', 'menu-images', true)
 on conflict (id) do nothing;
+
+-- ============================================================
+-- 13. Customer Promotion Module (segments, coupons, campaigns,
+--     redemptions, loyalty, automations)
+-- ============================================================
+
+alter table public.customers add column if not exists birthday date;
+alter table public.customers add column if not exists loyalty_points numeric not null default 0;
+
+alter table public.orders add column if not exists discount_amount numeric not null default 0;
+alter table public.orders add column if not exists promo_code text;
+alter table public.orders add column if not exists loyalty_points_redeemed numeric not null default 0;
+alter table public.orders add column if not exists loyalty_points_earned numeric not null default 0;
+
+create table if not exists public.customer_segments (
+  id bigserial primary key,
+  restaurant_id text not null references public.parameters(restaurant_id) on delete cascade,
+  name text not null,
+  description text,
+  rules jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_customer_segments_restaurant on public.customer_segments(restaurant_id);
+
+create table if not exists public.coupons (
+  id bigserial primary key,
+  restaurant_id text not null references public.parameters(restaurant_id) on delete cascade,
+  code text not null,
+  description text,
+  discount_type text not null default 'percentage' check (discount_type in ('percentage', 'fixed', 'bogo')),
+  discount_value numeric not null default 0,
+  min_bill numeric not null default 0,
+  max_discount numeric,
+  scope_item_name text,
+  max_uses integer,
+  per_customer_limit integer not null default 1,
+  starts_at timestamptz,
+  ends_at timestamptz,
+  redemption_count integer not null default 0,
+  is_active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (restaurant_id, code)
+);
+
+create index if not exists idx_coupons_restaurant on public.coupons(restaurant_id);
+
+create table if not exists public.campaigns (
+  id bigserial primary key,
+  restaurant_id text not null references public.parameters(restaurant_id) on delete cascade,
+  name text not null,
+  segment_id bigint references public.customer_segments(id) on delete set null,
+  segment_key text,
+  coupon_id bigint references public.coupons(id) on delete set null,
+  channel text not null check (channel in ('sms', 'whatsapp', 'email')),
+  subject text,
+  message text not null,
+  source text not null default 'manual' check (source in ('manual', 'automation')),
+  trigger_type text,
+  status text not null default 'draft' check (status in ('draft', 'scheduled', 'sent', 'failed')),
+  scheduled_at timestamptz,
+  sent_at timestamptz,
+  audience_count integer not null default 0,
+  delivered_count integer not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_campaigns_restaurant_created on public.campaigns(restaurant_id, created_at desc);
+create index if not exists idx_campaigns_due on public.campaigns(status, scheduled_at);
+
+create table if not exists public.campaign_deliveries (
+  id bigserial primary key,
+  campaign_id bigint not null references public.campaigns(id) on delete cascade,
+  restaurant_id text not null references public.parameters(restaurant_id) on delete cascade,
+  customer_id bigint references public.customers(id) on delete set null,
+  customer_name text,
+  recipient text not null,
+  channel text not null,
+  status text not null default 'queued' check (status in ('queued', 'sent', 'delivered', 'failed')),
+  error text,
+  message text,
+  sent_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_campaign_deliveries_campaign on public.campaign_deliveries(campaign_id);
+create index if not exists idx_campaign_deliveries_recipient on public.campaign_deliveries(restaurant_id, recipient);
+
+create table if not exists public.promotion_redemptions (
+  id bigserial primary key,
+  restaurant_id text not null references public.parameters(restaurant_id) on delete cascade,
+  coupon_id bigint not null references public.coupons(id) on delete cascade,
+  campaign_id bigint references public.campaigns(id) on delete set null,
+  order_id bigint references public.orders(id) on delete set null,
+  customer_phone text,
+  discount_amount numeric not null default 0,
+  order_total numeric not null default 0,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_promotion_redemptions_restaurant on public.promotion_redemptions(restaurant_id, created_at desc);
+create index if not exists idx_promotion_redemptions_coupon on public.promotion_redemptions(coupon_id, customer_phone);
+create index if not exists idx_promotion_redemptions_campaign on public.promotion_redemptions(campaign_id);
+
+create table if not exists public.loyalty_settings (
+  restaurant_id text primary key references public.parameters(restaurant_id) on delete cascade,
+  enabled boolean not null default true,
+  currency_per_point numeric not null default 10,
+  point_value numeric not null default 0.1,
+  min_redeem_points numeric not null default 100,
+  max_redeem_percent numeric not null default 50,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.loyalty_transactions (
+  id bigserial primary key,
+  restaurant_id text not null references public.parameters(restaurant_id) on delete cascade,
+  customer_phone text not null,
+  points numeric not null,
+  type text not null check (type in ('earn', 'redeem', 'adjustment')),
+  order_id bigint references public.orders(id) on delete set null,
+  coupon_id bigint references public.coupons(id) on delete set null,
+  note text,
+  balance_after numeric,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_loyalty_transactions_restaurant on public.loyalty_transactions(restaurant_id, created_at desc);
+create index if not exists idx_loyalty_transactions_phone on public.loyalty_transactions(restaurant_id, customer_phone);
+
+create table if not exists public.automations (
+  id bigserial primary key,
+  restaurant_id text not null references public.parameters(restaurant_id) on delete cascade,
+  trigger_type text not null check (trigger_type in ('birthday', 'inactive', 'first_visit', 'high_value', 'post_purchase', 'loyalty_milestone')),
+  channel text not null default 'sms' check (channel in ('sms', 'whatsapp', 'email')),
+  coupon_id bigint references public.coupons(id) on delete set null,
+  message text not null,
+  is_active boolean not null default false,
+  last_run_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (restaurant_id, trigger_type)
+);
+
+create index if not exists idx_automations_restaurant on public.automations(restaurant_id);
+
+alter table public.customer_segments enable row level security;
+alter table public.coupons enable row level security;
+alter table public.campaigns enable row level security;
+alter table public.campaign_deliveries enable row level security;
+alter table public.promotion_redemptions enable row level security;
+alter table public.loyalty_settings enable row level security;
+alter table public.loyalty_transactions enable row level security;
+alter table public.automations enable row level security;
+
+do $$
+begin
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'customer_segments' and policyname = 'open_select_customer_segments') then
+    create policy open_select_customer_segments on public.customer_segments for select to anon, authenticated using (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'customer_segments' and policyname = 'open_insert_customer_segments') then
+    create policy open_insert_customer_segments on public.customer_segments for insert to anon, authenticated with check (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'customer_segments' and policyname = 'open_update_customer_segments') then
+    create policy open_update_customer_segments on public.customer_segments for update to anon, authenticated using (true) with check (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'customer_segments' and policyname = 'open_delete_customer_segments') then
+    create policy open_delete_customer_segments on public.customer_segments for delete to anon, authenticated using (true);
+  end if;
+
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'coupons' and policyname = 'open_select_coupons') then
+    create policy open_select_coupons on public.coupons for select to anon, authenticated using (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'coupons' and policyname = 'open_insert_coupons') then
+    create policy open_insert_coupons on public.coupons for insert to anon, authenticated with check (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'coupons' and policyname = 'open_update_coupons') then
+    create policy open_update_coupons on public.coupons for update to anon, authenticated using (true) with check (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'coupons' and policyname = 'open_delete_coupons') then
+    create policy open_delete_coupons on public.coupons for delete to anon, authenticated using (true);
+  end if;
+
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'campaigns' and policyname = 'open_select_campaigns') then
+    create policy open_select_campaigns on public.campaigns for select to anon, authenticated using (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'campaigns' and policyname = 'open_insert_campaigns') then
+    create policy open_insert_campaigns on public.campaigns for insert to anon, authenticated with check (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'campaigns' and policyname = 'open_update_campaigns') then
+    create policy open_update_campaigns on public.campaigns for update to anon, authenticated using (true) with check (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'campaigns' and policyname = 'open_delete_campaigns') then
+    create policy open_delete_campaigns on public.campaigns for delete to anon, authenticated using (true);
+  end if;
+
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'campaign_deliveries' and policyname = 'open_select_campaign_deliveries') then
+    create policy open_select_campaign_deliveries on public.campaign_deliveries for select to anon, authenticated using (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'campaign_deliveries' and policyname = 'open_insert_campaign_deliveries') then
+    create policy open_insert_campaign_deliveries on public.campaign_deliveries for insert to anon, authenticated with check (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'campaign_deliveries' and policyname = 'open_update_campaign_deliveries') then
+    create policy open_update_campaign_deliveries on public.campaign_deliveries for update to anon, authenticated using (true) with check (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'campaign_deliveries' and policyname = 'open_delete_campaign_deliveries') then
+    create policy open_delete_campaign_deliveries on public.campaign_deliveries for delete to anon, authenticated using (true);
+  end if;
+
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'promotion_redemptions' and policyname = 'open_select_promotion_redemptions') then
+    create policy open_select_promotion_redemptions on public.promotion_redemptions for select to anon, authenticated using (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'promotion_redemptions' and policyname = 'open_insert_promotion_redemptions') then
+    create policy open_insert_promotion_redemptions on public.promotion_redemptions for insert to anon, authenticated with check (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'promotion_redemptions' and policyname = 'open_delete_promotion_redemptions') then
+    create policy open_delete_promotion_redemptions on public.promotion_redemptions for delete to anon, authenticated using (true);
+  end if;
+
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'loyalty_settings' and policyname = 'open_select_loyalty_settings') then
+    create policy open_select_loyalty_settings on public.loyalty_settings for select to anon, authenticated using (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'loyalty_settings' and policyname = 'open_insert_loyalty_settings') then
+    create policy open_insert_loyalty_settings on public.loyalty_settings for insert to anon, authenticated with check (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'loyalty_settings' and policyname = 'open_update_loyalty_settings') then
+    create policy open_update_loyalty_settings on public.loyalty_settings for update to anon, authenticated using (true) with check (true);
+  end if;
+
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'loyalty_transactions' and policyname = 'open_select_loyalty_transactions') then
+    create policy open_select_loyalty_transactions on public.loyalty_transactions for select to anon, authenticated using (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'loyalty_transactions' and policyname = 'open_insert_loyalty_transactions') then
+    create policy open_insert_loyalty_transactions on public.loyalty_transactions for insert to anon, authenticated with check (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'loyalty_transactions' and policyname = 'open_delete_loyalty_transactions') then
+    create policy open_delete_loyalty_transactions on public.loyalty_transactions for delete to anon, authenticated using (true);
+  end if;
+
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'automations' and policyname = 'open_select_automations') then
+    create policy open_select_automations on public.automations for select to anon, authenticated using (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'automations' and policyname = 'open_insert_automations') then
+    create policy open_insert_automations on public.automations for insert to anon, authenticated with check (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'automations' and policyname = 'open_update_automations') then
+    create policy open_update_automations on public.automations for update to anon, authenticated using (true) with check (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'automations' and policyname = 'open_delete_automations') then
+    create policy open_delete_automations on public.automations for delete to anon, authenticated using (true);
+  end if;
+end $$;
+
+create or replace function public.increment_coupon_redemptions(p_coupon_id bigint)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update public.coupons
+  set redemption_count = redemption_count + 1, updated_at = now()
+  where id = p_coupon_id;
+$$;
+
+grant execute on function public.increment_coupon_redemptions(bigint) to anon, authenticated;
+
+create or replace function public.record_loyalty_transaction(
+  p_restaurant_id text,
+  p_phone text,
+  p_points numeric,
+  p_type text,
+  p_name text default null,
+  p_order_id bigint default null,
+  p_note text default null
+)
+returns numeric
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_balance numeric;
+begin
+  update public.customers
+  set loyalty_points = greatest(loyalty_points + p_points, 0),
+      updated_at = now()
+  where restaurant_id = p_restaurant_id and phone = p_phone
+  returning loyalty_points into v_balance;
+
+  if v_balance is null then
+    v_balance := greatest(p_points, 0);
+    insert into public.customers (restaurant_id, name, phone, loyalty_points)
+    values (p_restaurant_id, coalesce(nullif(p_name, ''), 'Customer'), p_phone, v_balance);
+  end if;
+
+  insert into public.loyalty_transactions
+    (restaurant_id, customer_phone, points, type, order_id, note, balance_after)
+  values
+    (p_restaurant_id, p_phone, p_points, p_type, p_order_id, p_note, v_balance);
+
+  return v_balance;
+end;
+$$;
+
+grant execute on function public.record_loyalty_transaction(text, text, numeric, text, text, bigint, text) to anon, authenticated;

@@ -20,6 +20,10 @@ export interface ReceiptOrder {
   };
   orderType?: string;
   estimatedDeliveryTime?: number;
+  discountAmount?: number;
+  promoCode?: string;
+  loyaltyPointsRedeemed?: number;
+  loyaltyPointsEarned?: number;
 }
 
 export function buildReceiptText(order: ReceiptOrder): string {
@@ -57,8 +61,19 @@ export function buildReceiptText(order: ReceiptOrder): string {
   });
   lines.push("----------------------");
   lines.push(`Subtotal: ${formatCurrency(order.subtotal, currency)}`);
+  if (order.discountAmount && order.discountAmount > 0) {
+    lines.push(
+      `Discount${order.promoCode ? ` (${order.promoCode})` : ""}: -${formatCurrency(order.discountAmount, currency)}`
+    );
+  }
   lines.push(`Tax (${18}%): ${formatCurrency(order.tax, currency)}`);
+  if (order.loyaltyPointsRedeemed && order.loyaltyPointsRedeemed > 0) {
+    lines.push(`Loyalty Points Redeemed: ${order.loyaltyPointsRedeemed} pts`);
+  }
   lines.push(`Total: ${formatCurrency(order.total, currency)}`);
+  if (order.loyaltyPointsEarned && order.loyaltyPointsEarned > 0) {
+    lines.push(`Loyalty Points Earned: ${order.loyaltyPointsEarned} pts`);
+  }
   lines.push(`Payment: ${order.paymentMethod === "cash" ? "Cash" : "Online"}`);
   if (order.paymentMethod === "cash" && order.cashReceived !== undefined) {
     lines.push(`Cash Received: ${formatCurrency(order.cashReceived, currency)}`);

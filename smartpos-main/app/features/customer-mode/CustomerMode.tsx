@@ -1,12 +1,24 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
-import { ShoppingCart, Plus, Minus, Printer, MessageCircle, X, Search, CreditCard, UtensilsCrossed, ShoppingBag, Truck, Clock, Store, AlertTriangle } from "lucide-react";
+import { ShoppingCart, Plus, Minus, Printer, MessageCircle, X, Search, CreditCard, UtensilsCrossed, ShoppingBag, Truck, Clock, Store, AlertTriangle, Tag, Star } from "lucide-react";
 import { usePOSStore, checkMenuItemsStock, checkAllMenuItemsStock } from "@/lib/store";
 import type { MenuItemStockStatus } from "@/lib/store";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatCurrency } from "@/lib/utils";
 import ItemOptionsDialog from "@/components/ui/ItemOptionsDialog";
+import { supabase } from "@/lib/supabase";
+import {
+  CouponLike,
+  LoyaltySettingsLike,
+  computeCouponDiscount,
+  defaultLoyaltySettings,
+  earnPoints,
+  maxRedeemablePoints,
+  redeemValue,
+  validateCoupon,
+} from "@/lib/promotions";
+import { runEventAutomations } from "@/lib/promotionAutomations";
 import {
   buildReceiptText,
   openWhatsAppReceipt,
@@ -36,16 +48,140 @@ const loadRazorpayScript = () => {
   });
 };
 
+// Fire-and-forget post-checkout bookkeeping: coupon redemption + attribution,
+// loyalty earn/redeem ledger, and event automations. Promotions must never
+// block a successful checkout, so failures are logged and swallowed.
+async function postOrderRewards(opts: {
+  restaurantId: string;
+  restaurantName: string;
+  currency: string;
+  customer: { name: string; phone: string; email?: string | null; loyaltyBalance?: number | null };
+  orderId: number;
+  coupon: CouponLike | null;
+  couponDiscount: number;
+  discountedTotalWithTax: number;
+  redeemPoints: number;
+  earnedPoints: number;
+  loyaltySettings: LoyaltySettingsLike | null;
+}) {
+  try {
+    const digits = (opts.customer.phone || "").replace(/\D/g, "");
+
+    if (opts.coupon && opts.couponDiscount > 0) {
+      await supabase.rpc("increment_coupon_redemptions", { p_coupon_id: opts.coupon.id });
+
+      // Best-effort campaign attribution: match the latest delivered message to this
+      // phone that carried the same coupon.
+      let campaignId: number | null = null;
+      const { data: delivery } = await supabase
+        .from("campaign_deliveries")
+        .select("campaign_id")
+        .eq("restaurant_id", opts.restaurantId)
+        .eq("recipient", digits)
+        .eq("status", "delivered")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (delivery?.campaign_id) {
+        const { data: camp } = await supabase
+          .from("campaigns")
+          .select("coupon_id")
+          .eq("id", delivery.campaign_id)
+          .maybeSingle();
+        if (camp && camp.coupon_id === opts.coupon.id) {
+          campaignId = delivery.campaign_id as number;
+        }
+      }
+
+      await supabase.from("promotion_redemptions").insert({
+        restaurant_id: opts.restaurantId,
+        coupon_id: opts.coupon.id,
+        campaign_id: campaignId,
+        order_id: opts.orderId,
+        customer_phone: opts.customer.phone,
+        discount_amount: opts.couponDiscount,
+        order_total: opts.discountedTotalWithTax,
+      });
+    }
+
+    const previous = opts.customer.loyaltyBalance ?? 0;
+    let balanceAfter = opts.customer.loyaltyBalance ?? null;
+
+    if (opts.redeemPoints > 0) {
+      const { data: afterRedeem } = await supabase.rpc("record_loyalty_transaction", {
+        p_restaurant_id: opts.restaurantId,
+        p_phone: opts.customer.phone,
+        p_points: -opts.redeemPoints,
+        p_type: "redeem",
+        p_name: opts.customer.name,
+        p_order_id: opts.orderId,
+        p_note: `Loyalty redemption on order #${opts.orderId}`,
+      });
+      if (afterRedeem != null) balanceAfter = Number(afterRedeem);
+    }
+
+    if (opts.earnedPoints > 0 && opts.loyaltySettings?.enabled) {
+      const { data: afterEarn } = await supabase.rpc("record_loyalty_transaction", {
+        p_restaurant_id: opts.restaurantId,
+        p_phone: opts.customer.phone,
+        p_points: opts.earnedPoints,
+        p_type: "earn",
+        p_name: opts.customer.name,
+        p_order_id: opts.orderId,
+        p_note: `Points earned on order #${opts.orderId}`,
+      });
+      if (afterEarn != null) balanceAfter = Number(afterEarn);
+    }
+
+    const { count } = await supabase
+      .from("orders")
+      .select("id", { count: "exact", head: true })
+      .eq("restaurant_id", opts.restaurantId)
+      .eq("customer_phone", opts.customer.phone)
+      .in("status", ["settled", "completed", "delivered"]);
+
+    await runEventAutomations({
+      restaurantId: opts.restaurantId,
+      restaurantName: opts.restaurantName,
+      currency: opts.currency,
+      customer: {
+        name: opts.customer.name,
+        phone: opts.customer.phone,
+        email: opts.customer.email || null,
+      },
+      orderCountAfter: count ?? 1,
+      previousPointsBalance: previous,
+      finalPointsBalance: balanceAfter,
+      loyaltySettings: opts.loyaltySettings,
+      orderTotal: opts.discountedTotalWithTax,
+    });
+  } catch (err) {
+    console.error("Post-order reward bookkeeping failed:", err);
+  }
+}
+
 function CustomerInfoModal({
   onSubmit,
   onCancel,
   restaurantId,
   isDelivery,
+  appliedCoupon,
+  discountedSubtotal,
+  discountedTotalWithTax,
+  loyaltySettings,
+  currency,
+  hasNewItems,
 }: {
-  onSubmit: (info: { name: string; phone: string; email?: string; address?: string }) => void;
+  onSubmit: (info: { name: string; phone: string; email?: string; address?: string; redeemPoints?: number; loyaltyBalance?: number }) => void;
   onCancel: () => void;
   restaurantId?: string;
   isDelivery: boolean;
+  appliedCoupon?: CouponLike | null;
+  discountedSubtotal: number;
+  discountedTotalWithTax: number;
+  loyaltySettings: LoyaltySettingsLike | null;
+  currency: string;
+  hasNewItems: boolean;
 }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -53,6 +189,9 @@ function CustomerInfoModal({
   const [address, setAddress] = useState("");
   const [lookingUp, setLookingUp] = useState(false);
   const [foundCustomer, setFoundCustomer] = useState(false);
+  const [loyaltyBalance, setLoyaltyBalance] = useState<number | null>(null);
+  const [redeemPoints, setRedeemPoints] = useState("");
+  const [couponLimitError, setCouponLimitError] = useState<string | null>(null);
 
   useEffect(() => {
     if (phone.length === 10 && restaurantId) {
@@ -66,16 +205,61 @@ function CustomerInfoModal({
           if (result.name) setName(result.name);
           if (result.email) setEmail(result.email);
           if (result.address) setAddress(result.address);
+          setLoyaltyBalance(result.loyalty_points != null ? Number(result.loyalty_points) : null);
           toast.success("Customer found — details pre-filled");
         } else {
           setFoundCustomer(false);
+          setLoyaltyBalance(null);
         }
       });
       return () => { cancelled = true; };
     } else {
       setFoundCustomer(false);
+      setLoyaltyBalance(null);
     }
   }, [phone, restaurantId]);
+
+  // Per-customer coupon usage limit can only be checked once the phone is known
+  useEffect(() => {
+    let cancelled = false;
+    if (appliedCoupon && phone.length === 10 && restaurantId) {
+      supabase
+        .from("promotion_redemptions")
+        .select("id")
+        .eq("coupon_id", appliedCoupon.id)
+        .eq("customer_phone", phone)
+        .then(({ data }) => {
+          if (cancelled) return;
+          const limit = Number(appliedCoupon.per_customer_limit || 0);
+          const used = (data || []).length;
+          if (limit > 0 && used >= limit) {
+            setCouponLimitError(
+              used === 1
+                ? "You have already used this coupon once."
+                : `You have already used this coupon ${used} times.`
+            );
+          } else {
+            setCouponLimitError(null);
+          }
+        });
+      return () => { cancelled = true; };
+    } else {
+      setCouponLimitError(null);
+    }
+    return () => { cancelled = true; };
+  }, [phone, appliedCoupon, restaurantId]);
+
+  const balance = loyaltyBalance ?? 0;
+  const maxPts = maxRedeemablePoints(loyaltySettings, discountedSubtotal, balance);
+  const pts = redeemPoints.trim() === "" ? 0 : parseInt(redeemPoints, 10);
+  const redeemValid =
+    !isNaN(pts) &&
+    pts >= 0 &&
+    pts <= maxPts &&
+    (pts === 0 ||
+      (!!loyaltySettings && Number(loyaltySettings.min_redeem_points || 0) <= pts));
+  const redemptionPreview = redeemValid && loyaltySettings ? redeemValue(loyaltySettings, pts) : 0;
+  const payableAfterLoyalty = Math.max(0, discountedTotalWithTax - redemptionPreview);
 
   const handleSubmit = () => {
     if (!name.trim() || !phone.trim()) {
@@ -94,11 +278,21 @@ function CustomerInfoModal({
       toast.error("Please enter a valid email address");
       return;
     }
+    if (couponLimitError) {
+      toast.error(couponLimitError);
+      return;
+    }
+    if (!redeemValid) {
+      toast.error("Please enter a valid number of loyalty points");
+      return;
+    }
     onSubmit({
       name: name.trim(),
       phone: phone.trim(),
       email: email.trim() || undefined,
       address: address.trim() || undefined,
+      redeemPoints: pts > 0 ? pts : 0,
+      loyaltyBalance: balance > 0 ? balance : undefined,
     });
   };
 
@@ -138,6 +332,77 @@ function CustomerInfoModal({
               <p className="text-xs text-green-600 mt-1">Existing customer — details loaded</p>
             )}
           </div>
+          {appliedCoupon && hasNewItems && (
+            <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-green-800 flex items-center">
+                  <Tag className="h-4 w-4 mr-1.5" />
+                  Coupon {appliedCoupon.code} applied
+                </p>
+                <span className="text-xs text-green-600">discount applied to cart</span>
+              </div>
+              {couponLimitError && (
+                <p className="text-xs text-red-600 mt-1 font-medium">{couponLimitError}</p>
+              )}
+            </div>
+          )}
+          {loyaltySettings?.enabled && hasNewItems && (
+            <div className="rounded-lg border border-purple-200 bg-purple-50 p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-purple-800 flex items-center">
+                  <Star className="h-4 w-4 mr-1.5" />
+                  Loyalty Points
+                </p>
+                <span className="text-xs text-purple-700">
+                  Balance: <span className="font-bold">{balance} pts</span>
+                </span>
+              </div>
+              {loyaltySettings && maxPts > 0 ? (
+                <>
+                  <input
+                    type="number"
+                    min={0}
+                    max={maxPts}
+                    value={redeemPoints}
+                    onChange={(e) => setRedeemPoints(e.target.value.replace(/\D/g, ""))}
+                    placeholder={`Redeem up to ${maxPts} pts`}
+                    className="w-full px-3 py-2 border border-purple-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none text-sm"
+                  />
+                  <p className="text-[11px] text-purple-600">
+                    Max redeemable: {maxPts} pts (worth {formatCurrency(redeemValue(loyaltySettings, maxPts), currency)})
+                    {Number(loyaltySettings.min_redeem_points || 0) > 1 &&
+                      ` · Min ${loyaltySettings.min_redeem_points} pts`}
+                  </p>
+                  {(isNaN(pts) || pts > maxPts) && (
+                    <p className="text-xs text-red-600 font-medium">Exceeds your redeemable points</p>
+                  )}
+                  {!isNaN(pts) && pts > 0 && pts < Number(loyaltySettings.min_redeem_points || 0) && (
+                    <p className="text-xs text-red-600 font-medium">
+                      Minimum {loyaltySettings.min_redeem_points} points required to redeem
+                    </p>
+                  )}
+                  {redeemValid && pts > 0 && (
+                    <div className="text-xs text-purple-800 bg-white rounded-md border border-purple-200 px-2 py-1.5 space-y-0.5">
+                      <div className="flex justify-between">
+                        <span>Loyalty discount:</span>
+                        <span className="font-semibold">-{formatCurrency(redemptionPreview, currency)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Amount payable:</span>
+                        <span className="font-semibold">{formatCurrency(payableAfterLoyalty, currency)}</span>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="text-xs text-purple-600">
+                  {balance > 0
+                    ? "This order isn't eligible for redemption."
+                    : "You have no loyalty balance yet — you'll earn points on this order."}
+                </p>
+              )}
+            </div>
+          )}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">
               Customer Name *
@@ -193,7 +458,9 @@ function CustomerInfoModal({
               !name.trim() ||
               !phone.trim() ||
               phone.length < 10 ||
-              (isDelivery && !address.trim())
+              (isDelivery && !address.trim()) ||
+              !!couponLimitError ||
+              !redeemValid
             }
             className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
           >
@@ -467,10 +734,28 @@ function ReceiptModal({ order, currency, onClose }: { order: any; currency: stri
             <span>Subtotal:</span>
             <span>{formatCurrency(order.subtotal, currency)}</span>
           </div>
+          {order.discountAmount > 0 && (
+            <div className="flex justify-between text-sm text-green-600">
+              <span>Discount{order.promoCode ? ` (${order.promoCode})` : ""}:</span>
+              <span>-{formatCurrency(order.discountAmount, currency)}</span>
+            </div>
+          )}
           <div className="flex justify-between text-sm">
             <span>Tax (18%):</span>
             <span>{formatCurrency(order.tax, currency)}</span>
           </div>
+          {order.loyaltyPointsRedeemed > 0 && (
+            <div className="flex justify-between text-sm">
+              <span>Points Redeemed:</span>
+              <span>{order.loyaltyPointsRedeemed} pts</span>
+            </div>
+          )}
+          {order.loyaltyPointsEarned > 0 && (
+            <div className="flex justify-between text-sm">
+              <span>Points Earned:</span>
+              <span>{order.loyaltyPointsEarned} pts</span>
+            </div>
+          )}
           <div className="flex justify-between font-bold text-base pt-1 border-t">
             <span>Total:</span>
             <span>{formatCurrency(order.total, currency)}</span>
@@ -564,12 +849,17 @@ export default function CustomerMode({
     phone: string;
     email?: string;
     address?: string;
+    redeemPoints?: number;
+    loyaltyBalance?: number;
   } | null>(null);
   const [orderType, setOrderType] = useState<"dinein" | "takeaway" | "delivery">(customerMode ? "delivery" : "dinein");
   const [estimatedDeliveryTime, setEstimatedDeliveryTime] = useState<number>(30);
   const [stockCheckResults, setStockCheckResults] = useState<MenuItemStockStatus[]>([]);
   const [isCheckingStock, setIsCheckingStock] = useState(false);
   const [outOfStockItems, setOutOfStockItems] = useState<Set<string>>(new Set());
+  const [appliedCoupon, setAppliedCoupon] = useState<CouponLike | null>(null);
+  const [couponInput, setCouponInput] = useState("");
+  const [loyaltySettings, setLoyaltySettings] = useState<LoyaltySettingsLike | null>(null);
 
   const {
     products,
@@ -626,6 +916,31 @@ export default function CustomerMode({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [restaurantId]);
+
+  // Load the restaurant's loyalty configuration (falls back to smart defaults)
+  useEffect(() => {
+    if (!restaurantId) return;
+    let cancelled = false;
+    supabase
+      .from("loyalty_settings")
+      .select("*")
+      .eq("restaurant_id", restaurantId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled) return;
+        setLoyaltySettings(
+          (data as LoyaltySettingsLike | null) || defaultLoyaltySettings(restaurantId)
+        );
+      });
+    return () => { cancelled = true; };
+  }, [restaurantId]);
+
+  // Coupons apply to the cart only — clear it if everything is removed
+  useEffect(() => {
+    if (cart.length === 0) {
+      setAppliedCoupon(null);
+    }
+  }, [cart.length]);
 
   // Determine which menu items are out of stock based on ingredient availability
   useEffect(() => {
@@ -750,8 +1065,27 @@ export default function CustomerMode({
   );
 
   const cartTotal = getCartTotal();
-  const taxAmount = useMemo(() => Math.round(cartTotal * 0.18), [cartTotal]);
-  const totalWithTax = useMemo(() => cartTotal + taxAmount, [cartTotal, taxAmount]);
+  const cartLines = useMemo(
+    () => cart.map((i) => ({ name: i.name, price: i.price, quantity: i.quantity })),
+    [cart]
+  );
+  const couponNote = useMemo(
+    () => (appliedCoupon ? validateCoupon(appliedCoupon, { subtotal: cartTotal }) : null),
+    [appliedCoupon, cartTotal]
+  );
+  const couponDiscount = useMemo(
+    () =>
+      !appliedCoupon || couponNote
+        ? 0
+        : computeCouponDiscount(appliedCoupon, cartLines, cartTotal),
+    [appliedCoupon, couponNote, cartLines, cartTotal]
+  );
+  const discountedSubtotal = useMemo(
+    () => Math.max(0, cartTotal - couponDiscount),
+    [cartTotal, couponDiscount]
+  );
+  const taxAmount = useMemo(() => Math.round(discountedSubtotal * 0.18), [discountedSubtotal]);
+  const totalWithTax = useMemo(() => discountedSubtotal + taxAmount, [discountedSubtotal, taxAmount]);
   const cartItemCount = useMemo(() => cart.reduce((s, i) => s + i.quantity, 0), [cart]);
 
   const categories = useMemo(() => {
@@ -781,6 +1115,40 @@ export default function CustomerMode({
     setOrderType(type);
     usePOSStore.setState({ activeOrders: [] });
     if (type !== "delivery") setEstimatedDeliveryTime(30);
+  };
+
+  const handleApplyCoupon = async () => {
+    const code = couponInput.trim().toUpperCase();
+    if (!code || !restaurantId) return;
+    try {
+      const { data, error } = await supabase
+        .from("coupons")
+        .select("*")
+        .eq("restaurant_id", restaurantId)
+        .eq("code", code)
+        .maybeSingle();
+      if (error) throw error;
+      const coupon = data as CouponLike | null;
+      if (!coupon) {
+        toast.error("Invalid coupon code");
+        return;
+      }
+      const err = validateCoupon(coupon, { subtotal: cartTotal });
+      if (err) {
+        toast.error(err);
+        return;
+      }
+      setAppliedCoupon(coupon);
+      setCouponInput("");
+      toast.success(`Coupon ${coupon.code} applied`);
+    } catch {
+      toast.error("Could not validate this coupon");
+    }
+  };
+
+  const handleRemoveCoupon = () => {
+    setAppliedCoupon(null);
+    setCouponInput("");
   };
 
   const handleProceedToPayment = () => {
@@ -825,8 +1193,8 @@ export default function CustomerMode({
           notes: item.notes || "",
         })),
         subtotal: cartTotal,
-        tax: taxAmount,
-        total: totalWithTax,
+        tax: Math.round(cartTotal * 0.18),
+        total: cartTotal + Math.round(cartTotal * 0.18),
         customer_name: "",
         customer_phone: "",
         payment_method: "unpaid",
@@ -849,6 +1217,8 @@ export default function CustomerMode({
     phone: string;
     email?: string;
     address?: string;
+    redeemPoints?: number;
+    loyaltyBalance?: number;
   }) => {
     setCustomerInfo(info);
     setShowCustomerInfo(false);
@@ -892,10 +1262,30 @@ export default function CustomerMode({
         notes: item.notes || "",
       }));
       const combinedItems = isOffPremise ? cartItems : [...priorItems, ...cartItems];
-      const grandTotal = isOffPremise ? totalWithTax : activeOrdersTotal + totalWithTax;
-      const combinedSubtotal = isOffPremise ? cartTotal : activeOrdersSubtotal + cartTotal;
-      const combinedTax = isOffPremise ? taxAmount : activeOrdersTax + taxAmount;
+
+      // Promotions apply to the cart portion only — never to previous/settled orders
+      const hasNewItems = cart.length > 0;
+      const coupon = hasNewItems ? appliedCoupon : null;
+      const couponDiscount =
+        hasNewItems && coupon && !couponNote
+          ? computeCouponDiscount(coupon, cartLines, cartTotal)
+          : 0;
+      const discountedSubtotalFinal = Math.max(0, cartTotal - couponDiscount);
+      const cartTaxFinal = Math.round(discountedSubtotalFinal * 0.18);
+      const cartTotalWithTaxFinal = discountedSubtotalFinal + cartTaxFinal;
+      const redeemPts = hasNewItems ? customerInfo.redeemPoints || 0 : 0;
+      const redeemedValueFinal =
+        redeemPts > 0 && loyaltySettings ? redeemValue(loyaltySettings, redeemPts) : 0;
+      const earnedPts = loyaltySettings ? earnPoints(loyaltySettings, cartTotalWithTaxFinal) : 0;
       const priorOrderCount = activeOrders.length;
+      const grandTotal = isOffPremise
+        ? cartTotalWithTaxFinal
+        : activeOrdersTotal + cartTotalWithTaxFinal;
+      const finalPayable = Math.max(0, grandTotal - redeemedValueFinal);
+      const combinedSubtotal = isOffPremise
+        ? discountedSubtotalFinal
+        : activeOrdersSubtotal + discountedSubtotalFinal;
+      const combinedTax = isOffPremise ? cartTaxFinal : activeOrdersTax + cartTaxFinal;
 
       // Shared payment-id convention so EVERY settled row carries identical ids
       const paidOrderId =
@@ -915,9 +1305,9 @@ export default function CustomerMode({
           razorpay_order_id: paidOrderId,
           razorpay_payment_id: paidPaymentId,
           items: cartItems,
-          subtotal: cartTotal,
-          tax: taxAmount,
-          total: totalWithTax,
+          subtotal: discountedSubtotalFinal,
+          tax: cartTaxFinal,
+          total: Math.max(0, cartTotalWithTaxFinal - redeemedValueFinal),
           customer_name: customerInfo.name,
           customer_phone: customerInfo.phone,
           customer_email: customerInfo.email || null,
@@ -928,6 +1318,10 @@ export default function CustomerMode({
           table_number: effTable,
           tab_number: effTab,
           estimated_delivery_time: orderType === "delivery" ? estimatedDeliveryTime : null,
+          discount_amount: couponDiscount,
+          promo_code: coupon?.code || null,
+          loyalty_points_redeemed: redeemPts,
+          loyalty_points_earned: earnedPts,
         };
 
         const order = await createOrder(orderData);
@@ -954,7 +1348,7 @@ export default function CustomerMode({
         items: combinedItems,
         subtotal: combinedSubtotal,
         tax: combinedTax,
-        total: grandTotal,
+        total: finalPayable,
         paymentMethod: paymentData.method,
         cashReceived: paymentData.cashReceived,
         change: paymentData.change,
@@ -963,6 +1357,10 @@ export default function CustomerMode({
         customerInfo,
         orderType: orderTypeLabel,
         estimatedDeliveryTime: orderType === "delivery" ? estimatedDeliveryTime : undefined,
+        discountAmount: couponDiscount,
+        promoCode: coupon?.code || undefined,
+        loyaltyPointsRedeemed: redeemPts,
+        loyaltyPointsEarned: earnedPts,
       };
 
       setLastOrder(receiptOrder);
@@ -974,8 +1372,26 @@ export default function CustomerMode({
       toast.success(
         isOffPremise
           ? `Payment received — Order #${receiptId} sent to kitchen`
-          : `Settled ${priorOrderCount + (cart.length > 0 ? 1 : 0)} order(s) — ${formatCurrency(grandTotal, currency)}`
+          : `Settled ${priorOrderCount + (cart.length > 0 ? 1 : 0)} order(s) — ${formatCurrency(finalPayable, currency)}`
       );
+
+      // Record coupon redemption, loyalty ledger updates and fire event
+      // automations — fire-and-forget so checkout is never blocked.
+      if (hasNewItems) {
+        void postOrderRewards({
+          restaurantId,
+          restaurantName,
+          currency,
+          customer: customerInfo,
+          orderId: receiptId,
+          coupon,
+          couponDiscount,
+          discountedTotalWithTax: cartTotalWithTaxFinal,
+          redeemPoints: redeemPts,
+          earnedPoints: earnedPts,
+          loyaltySettings,
+        });
+      }
 
       const receiptText = buildReceiptText(receiptOrder);
       if (customerInfo.email) {
@@ -1125,6 +1541,48 @@ export default function CustomerMode({
             </p>
           </div>
         )}
+        <div className="bg-white border border-gray-200 rounded-lg p-2">
+          {appliedCoupon ? (
+            <div className="flex items-center justify-between">
+              <div className="flex items-center min-w-0">
+                <Tag className="h-4 w-4 text-green-600 mr-1.5 flex-shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-green-700 truncate">{appliedCoupon.code}</p>
+                  {couponNote ? (
+                    <p className="text-[11px] text-amber-600">{couponNote}</p>
+                  ) : (
+                    <p className="text-[11px] text-green-600">-{formatCurrency(couponDiscount, currency)} off</p>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={handleRemoveCoupon}
+                className="text-gray-400 hover:text-red-500 p-1"
+                title="Remove coupon"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          ) : (
+            <div className="flex space-x-2">
+              <input
+                type="text"
+                value={couponInput}
+                onChange={(e) => setCouponInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") handleApplyCoupon(); }}
+                placeholder="Enter coupon code"
+                className="flex-1 px-2.5 py-1.5 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none uppercase"
+              />
+              <button
+                onClick={handleApplyCoupon}
+                disabled={!couponInput.trim()}
+                className="px-3 py-1.5 bg-indigo-600 text-white text-sm rounded-md hover:bg-indigo-700 disabled:opacity-50 flex items-center"
+              >
+                Apply
+              </button>
+            </div>
+          )}
+        </div>
         {activeOrders.length > 0 && !isOffPremise && (
           <>
             <div className="flex justify-between text-sm text-gray-600">
@@ -1141,6 +1599,12 @@ export default function CustomerMode({
           <span>New Subtotal</span>
           <span>{formatCurrency(cartTotal, currency)}</span>
         </div>
+        {couponDiscount > 0 && (
+          <div className="flex justify-between text-sm text-green-600">
+            <span>Discount ({appliedCoupon?.code})</span>
+            <span>-{formatCurrency(couponDiscount, currency)}</span>
+          </div>
+        )}
         <div className="flex justify-between text-sm text-gray-600">
           <span>New Tax (18%)</span>
           <span>{formatCurrency(taxAmount, currency)}</span>
@@ -1450,11 +1914,23 @@ Out of Stock
           onCancel={() => setShowCustomerInfo(false)}
           restaurantId={restaurantId}
           isDelivery={orderType === "delivery"}
+          appliedCoupon={appliedCoupon}
+          discountedSubtotal={discountedSubtotal}
+          discountedTotalWithTax={totalWithTax}
+          loyaltySettings={loyaltySettings}
+          currency={currency}
+          hasNewItems={cart.length > 0}
         />
       )}
       {showPayment && customerInfo && (
         <PaymentModal
-          amount={isOffPremise ? totalWithTax : activeOrdersTotal + totalWithTax}
+          amount={Math.max(
+            0,
+            (isOffPremise ? totalWithTax : activeOrdersTotal + totalWithTax) -
+              (customerInfo.redeemPoints && loyaltySettings
+                ? redeemValue(loyaltySettings, customerInfo.redeemPoints)
+                : 0)
+          )}
           restaurantId={restaurantId}
           customerInfo={customerInfo}
           currency={currency}
