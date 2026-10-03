@@ -14,8 +14,8 @@ to completion. Professionals take jobs. Staff run the marketplace.
 | # | Phase | Scope | Exit criteria | Status |
 |---|---|---|---|---|
 | 0 | Foundation | Next.js scaffold, design tokens, `AuthContext`, roles, migrations 0001–0007, seed, buckets | Login works for every role; RLS verified; a professional and a service exist | done |
-| 1 | Catalogue & availability | Public landing, catalogue, service detail, `GET /api/availability`, addresses, geolocation | Customer can find a bookable service at their address and see real slots | in progress |
-| 2 | Booking & pricing | Quote engine, booking create, cancel/reschedule, coupons, invoice stub, `bookings` state machine | Bookings can be created and cancelled end-to-end with correct money maths | planned |
+| 1 | Catalogue & availability | Public landing, catalogue, service detail, `GET /api/availability`, addresses, geolocation | Customer can find a bookable service at their address and see real slots | done |
+| 2 | Booking & pricing | Quote engine, booking create, cancel/reschedule, coupons, invoice stub, `bookings` state machine | Bookings can be created and cancelled end-to-end with correct money maths | next |
 | 3 | Payments | Razorpay orders, webhook, verify, refunds, wallet ledger, reconciliation cron | Real money in, real money out; the webhook is the sole authority; RLS on payments | planned |
 | 4 | Professional app | KYC upload, verification workflow, working hours, offers inbox, accept/decline, arrive, OTP, complete | A verified professional can take and complete a job | planned |
 | 5 | Matching engine | Candidate ranking, offer fan-out, advisory locks, reassignment cascade, search sweeper | No double assignment under concurrency; exhausted search auto-refunds | planned |
@@ -32,23 +32,29 @@ Built before the phase list was tracked. Migrations 0000–0007 and 0024–0027,
 email + password sign-in flows, the OTP ledger, the role/capability table, and
 162 tests. See `README.md`.
 
-### Phase 1 — Catalogue & availability (in progress)
+### Phase 1 — Catalogue & availability (complete)
 
 Plan: [`01-catalogue-availability/01-PLAN.md`](01-catalogue-availability/01-PLAN.md).
 
-The catalogue schema is already in place from Phase 0 (0002–0007: cities,
+The catalogue schema was already in place from Phase 0 (0002–0007: cities,
 localities, categories, services, tasks, images, keywords, service areas,
-durations, and the seed). What Phase 1 adds is the product surface on top of it:
+durations, and the seed). Phase 1 added the product surface on top:
 
-- `addresses` (0008) and the locality resolution that turns a typed or
-  geolocated address into the `(locality, service)` pair everything else gates on.
+- `addresses` (0008) and the locality resolution that turns a typed or geolocated
+  address into the `(locality, service)` pair everything else gates on.
 - The public endpoints: `/api/landing`, `/api/service-categories`,
   `/api/services`, `/api/services/[slug]`, `/api/availability`,
   `/api/availability/estimate`.
 - Address CRUD for a signed-in customer.
 - The three public pages: `/`, `/services`, `/services/[slug]`.
+- `docs/DATABASE.md`, `docs/API.md`, `docs/FEATURES.md`, `docs/ARCHITECTURE.md`.
 
-### Known deferrals from Phase 1
+273 tests, 15 files. Two defects were found and fixed while closing the phase: a
+client/server query-parameter mismatch that made the duration picker inert, and the
+absence of any address-isolation test against a real database. See
+[STATE.md](STATE.md).
+
+### Deferrals from Phase 1
 
 | Deferred | Why | Lands in |
 |---|---|---|
