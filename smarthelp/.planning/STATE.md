@@ -2,11 +2,13 @@
 
 ## Current Phase
 
-Phase 2 — Booking & pricing. **In progress.** Plan:
+Phase 2 — Booking & pricing. **Substantially complete.** Plan:
 [`phases/02-booking-pricing/02-PLAN.md`](phases/02-booking-pricing/02-PLAN.md).
 
-The database foundation is done and proven; no application code has been written
-yet. Next is `lib/money.ts` and `lib/pricing.ts`.
+The database, the pricing engine, the endpoints, the customer pages and the demo
+data are all in. What remains is the payment hand-off (Phase 3), the catalogue
+rating aggregate, and one deliberate deferral: there is no consolidated
+`bookingView` read model.
 
 ## Phases Completed
 
@@ -28,18 +30,28 @@ yet. Next is `lib/money.ts` and `lib/pricing.ts`.
 | Coupons | `0016` — `coupons`, `coupon_usage` ledger | done |
 | Ratings | `0017` — `ratings` with the eligibility trigger | done |
 | Address guard | `block_address_delete_with_future_bookings()` (deferred from 0008) | done |
-| Tests | `test/db.booking.test.ts`, 28 live-database assertions | done |
+| Tests | `test/db.booking.test.ts`, `test/db.rls.test.ts`, `test/db.connection.test.ts` | done |
 | Migration dry-run | `scripts/check-migrations.mjs` | done |
-| Pricing | `lib/money.ts`, `lib/pricing.ts` — 59 tests | done |
-| Booking services | `lib/bookingServer.ts`, cancellation, status | not started |
-| Endpoints | the eight `/api/bookings` routes | not started |
-| Checkout UI | components and pages | not started |
-| Saved-address picker | pass `addressId` from checkout (Phase 1 gap) | not started |
-| Roles | customer capabilities in `lib/roles.ts` | not started |
-| Seed + docs | bookings in the demo data, `docs/` refresh | not started |
+| Pricing | `lib/money.ts`, `lib/pricing.ts` | done |
+| Booking services | `lib/bookingServer.ts` — `getBookingById`, `getBookingForCaller`, `transitionBooking` | done |
+| Endpoints | `/api/bookings` — list, one, quote, create, cancel, reschedule, review, invoice | done |
+| Saved-address picker | pass `addressId` from checkout (Phase 1 gap) | done |
+| Quote token | §7.2's signed token — issued by quote, verified and stored by create | done |
+| Atomic write paths | `0028` — `create_booking`, `cancel_booking`, `transition_booking` | done |
+| Roles | customer capabilities in `lib/roles.ts` | done |
+| Seed + docs | bookings in the demo data, `docs/API.md` §4.4, `DATABASE.md` §8, `FEATURES.md` §4 | done |
 
-**360 tests, 18 files.** 302 need nothing but the code; 58 run against a live
+**489 tests, 25 files** — 422 need nothing but the code, 67 run against a live
 database. Lint, typecheck and build are clean.
+
+### The endpoints exist
+
+`reschedule` no longer answers 409 on every request: it used to transition to
+`draft`, which nothing may become, and now moves the window and status within
+`RESCHEDULABLE_STATUSES` — one list in `lib/status.ts`, read by the route *and* the
+detail page, so the UI cannot offer a reschedule the database will refuse. `cancel`
+writes `cancellation_reason_code`, `cancelled_at` and the §11.1 fee, in one
+statement.
 
 ## The pricing engine
 
@@ -190,17 +202,46 @@ no.
 
 ## Known issues carried forward
 
+### Fixed during 261003-03, recorded because the reasoning matters
+
+- **`transitionBooking`'s `actor` and `note` were accepted and discarded. — fixed by
+  `0028`.** `0011` reads `app.transition_actor` and `app.transition_note` as
+  transaction-local settings, and PostgREST cannot set those in the same transaction
+  as the update, so every privileged write landed in `booking_status_history` with a
+  null actor — the anonymity `0011`'s own comment calls "exactly the events that
+  matter". Each of the three new functions sets both settings *itself* and then
+  performs the writes that read them, in one statement.
+- **Three PostgREST requests could not be one transaction. — fixed by `0028` too.**
+  Creating a booking was a row, then its `booking_items`, then a status update, so a
+  failure between any two left a booking with a total and nothing behind it.
+  `create_booking` does all three; the test that proves it uses a duplicate
+  `service_id` to make one line impossible and asserts the *booking count* is
+  unchanged afterwards.
+- **`POST /api/bookings/[id]/reschedule` answered 409 on every request.** See above.
+- **Idempotency is now used**, by `POST /api/bookings`, with the validated body as
+  the hash so whitespace cannot spend a customer's key.
+- **The `/customer` "Browse services" button is disabled** with the title "Arrives
+  in Phase 1", which was false — the catalogue is public and built.
+
+### Still open
+
+- **A `localStorage` `addressId` naming a deleted row pins checkout to a 404.**
+  Found while fixing the case beside it (quick task 261004-gh9, which gave a
+  customer with *no* addresses a form and left this one alone). With the list
+  empty and `addressId` still truthy, neither the new form nor the amber notice
+  renders and Confirm stays enabled — `SavedAddressPicker` falls back to the
+  default for display only, and never clears the selection. Pre-existing;
+  unchanged. The fix reaches `BookingPanel` and `localStorage`.
 - **`GET /api/availability` answers `VALIDATION_ERROR` (with a 422 status
   override) for an unresolvable locality**, where its own docstring and the plan
   both say `SERVICE_UNAVAILABLE`. A client branching on `code` therefore sees a
   different code for the same 422 that an uncovered *service* produces. Left as
   is, and documented in `docs/API.md`.
-- **Idempotency is built but unused.** `claim_idempotency_key` /
-  `complete_idempotency_key` exist with all four outcomes and a live test, but no
-  Route Handler calls them, so `IDEMPOTENCY_CONFLICT` is unreachable today. Phase 2
-  is the first phase that wants it.
-- **The `/customer` "Browse services" button is disabled** with the title "Arrives
-  in Phase 1", which is now false — the catalogue is public and built.
+- **Nothing consumes `quoteToken` for payment.** It is issued, verified and stored
+  on `bookings.quote_token`, which is the whole of §7.2's requirement; Phase 3 has
+  to decide what a payment hand-off does with it.
+- **There is no consolidated `bookingView`.** Detail pages assemble their payload
+  from several queries. Correct, but more than one round trip per page.
 - **Dead code**: `noContent`, `requireCapability`/`requireStaff`/`requireAdmin`
   (the capability table is enforced by the UI only), `isUuid`, `parsePaging`,
   `createRequestClient`, a byte-identical private `maskEmail` in `send-otp`, and
@@ -220,30 +261,92 @@ no.
   from the legacy era. Harmless, because the ledger is only consulted for files
   that exist, but it is a record of a file nobody can read.
 
+## The bug 489 tests could not see: no browser call was authenticated
+
+Found by using the application, not by the suite. A signed-in customer opened
+`/customer/bookings` and was told "Please sign in to continue."
+
+- **`credentials: 'include'` is not authentication here.** `requireAuth` reads the
+  `Authorization` header and nothing else. The Supabase browser client persists to
+  `localStorage`, not to a cookie, so `credentials: 'include'` carries nothing the
+  route can check — it is easy to write and believe the call is authenticated,
+  because the page is visibly signed in. `lib/bookingClient.ts` did exactly that, on
+  every booking read and write.
+- **`SavedAddressPicker` had the same omission, and failed silently.** It sends
+  `credentials: 'include'` with no token and returns quietly on a non-ok response,
+  so checkout quietly showed no saved addresses. Nobody had reported that one; the
+  bookings page just happened to shout about it first.
+- **Every route test passed, because each builds its own `Request` with the header
+  already attached.** The 40 tests in `routes.bookings.test.ts` prove the server
+  accepts a bearer token. No test imported the module that failed to send one —
+  `bookingClient.ts` had no test file at all.
+- **`authorizationHeader()` now lives in `lib/sessionHeaders.ts`** and both callers
+  import it, so a third client inherits it by importing rather than by remembering.
+  The server side needed no change: signing in as the demo customer and calling the
+  routes with a real token returned 353 bookings and 246 addresses.
+- **The gap was the browser client's, so it is now tested as one.**
+  `test/bookingClient.test.ts` asserts the header on all six verbs, that it is the
+  caller's own token, that it is re-read per call so a rotated token is never stale,
+  and that no session means *no header* rather than an empty one or a thrown error.
+  `test/sessionHeaders.test.ts` covers the helper itself.
+
+## Two bugs the tests found that were not about bookings
+
+Both were in the harness, and both had been passing by luck.
+
+- **The quote token's items came back in the wrong shape.** The canonical form signs
+  each item as a positional triple, so the signature does not depend on key order —
+  and verification handed that triple back as-is, so a caller's `item.serviceId` was
+  `undefined`. Nothing noticed until the create route started *comparing* the
+  claims against the request: every valid token then failed to agree with itself.
+  Verification now rebuilds the items as objects and validates each field.
+- **One dead connection failed every later test in a DB file.** The suite holds a
+  single `pg` client for two minutes of sequential queries against a pooler that
+  recycles idle connections; when the socket went, the transport error surfaced on
+  each subsequent test and looked like a dozen unrelated booking failures. Rerunning
+  made it green, which is the worst outcome — it teaches everyone to ignore the
+  gate. `dbEnv.ts` now detects a dead socket and reconnects once, and
+  `test/db.connection.test.ts` provokes the drop on purpose
+  (`pg_terminate_backend(pg_backend_pid())`) so the recovery path is asserted rather
+  than hoped for. It retries transport errors *only*: a `check_violation` is a real
+  answer and is never retried.
+- **`npm run test:db` listed its files explicitly**, so `db.connection.test.ts` was
+  silently outside the gate. It is a filter now (`vitest run test/db.`) and the files
+  run sequentially — three live-DB files in parallel against one remote link
+  produced `fetch failed` and 5-second timeouts that had nothing to do with the code.
+
 ## Quick Tasks Completed
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 261003-01 | Continue building smarthelp phase 2 asap | 2026-10-03 | 97799f0 | [.planning/quick/261003-01-continue-smarthelp-phase2](./quick/261003-01-continue-smarthelp-phase2/) |
+| 261003-02 | Detect and fix every error under smarthelp | 2026-10-03 | (this commit) | [.planning/quick/261003-02-smarthelp-error-fixes](./quick/261003-02-smarthelp-error-fixes/) |
+| 261003-03 | Atomic booking writes, quote token, seed data, docs | 2026-10-03 | (uncommitted) | [.planning/quick/261003-03-atomic-booking-writes](./quick/261003-03-atomic-booking-writes/) |
+| 261003-04 | Authenticated the browser client: `lib/sessionHeaders.ts` | 2026-10-03 | (uncommitted) | — |
+| 261004-gh9 | Address creation at checkout: `lib/addressClient.ts`, `AddressForm.tsx` | 2026-10-04 | 3cad3b1-353b0be | [.planning/quick/261004-gh9-fix-logged-in-customer-booking-flow-brow](./quick/261004-gh9-fix-logged-in-customer-booking-flow-brow/) |
 
 
 ## Blockers/Concerns
 
-- None outstanding. Migrations through `0017` are applied to the live project and
-  `npm run test:db` passes against it (58 tests).
+- None outstanding. Migrations through `0028` are applied to the live project and
+  `npm run test:db` passes against it (67 tests across 3 files).
 - The database tests need a migrated, seeded database and `SUPABASE_DB_URL`. Without
   one they skip loudly rather than passing quietly.
 - `test/db.booking.test.ts` needs more than one customer and more than one
   professional to exist for the two rating-mismatch assertions; where only one
   exists, those tests clean up and return rather than failing.
+- **`gsd-sdk` is broken in this environment** and could not write the quick-task
+  artifacts: `Cannot find module
+  'C:\Users\arush\AppData\Local\npm-cache\_npx\6bdcb3e009b8f3f6\node_modules\@opengsd\get-shit-done-redux\bin\gsd-sdk.js'`.
+  The `261003-03` plan and summary were therefore written by hand, matching the
+  directory layout the earlier two tasks use.
+- **The working tree carries substantial pre-existing changes from outside this
+  phase.** No commit was made for `261003-03`, because separating these files from
+  whatever else is uncommitted is a decision for whoever owns the branch.
 
 ---
 
-Last activity: Phase 2 pricing engine -- `lib/money.ts` and `lib/pricing.ts`, 59 tests, and a departure from A7.1 because its commission split does not balance.
-
----
-
-Last activity: Phase 2 pricing engine -- `lib/money.ts` and `lib/pricing.ts`, 59 tests, and a departure from A7.1 because its commission split does not balance.
+Last activity: 2026-10-04 - Completed quick task 261004-gh9: a signed-in customer with no saved address could reach checkout and not finish, because no page anywhere called POST /api/customers/me/addresses. Added lib/addressClient.ts, components/catalogue/AddressForm.tsx, wired both into CheckoutForm via SavedAddressPicker's loaded list, and covered the transport with 19 tests (524 in 28 files pass).
 
 
 
