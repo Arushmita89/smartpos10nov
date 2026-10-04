@@ -202,6 +202,19 @@ function hasPoint(
   );
 }
 
+/**
+ * A trimmed optional field, or nothing at all.
+ *
+ * The server trims every string before validating it, so a value of `'   '`
+ * reaches the row as `''` — an empty `line2` rather than a NULL, which reads as
+ * "they left a blank line in" instead of "they did not write one". Dropping it
+ * here is the same value with a shape that means what it looks like.
+ */
+function optional(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
 export function createAddress(input: CreateAddressInput): Promise<CreateAddressResult> {
   // A half-sent point is dropped rather than forwarded. `validateAddressInput`
   // refuses one, and the server's own answer for "no coordinates" is the centre of
@@ -209,19 +222,27 @@ export function createAddress(input: CreateAddressInput): Promise<CreateAddressR
   // the honest thing to show is "the centre of your area", not a pin we invented.
   const point = hasPoint(input) ? { lat: input.lat, lng: input.lng } : {};
 
+  const label = optional(input.label);
+  const line2 = optional(input.line2);
+  const landmark = optional(input.landmark);
+  const accessNotes = optional(input.accessNotes);
+
   return request<CreateAddressResult>('/api/customers/me/addresses', {
     method: 'POST',
     body: JSON.stringify({
-      line1: input.line1,
-      area: input.area,
-      city: input.city,
-      state: input.state,
-      pincode: input.pincode,
-      ...(input.label ? { label: input.label } : {}),
+      // Trimmed here so the body is what the row will hold. `validateAddressInput`
+      // trims anyway; doing it once means the payload can be asserted on and the
+      // pinned column cannot collect the padding.
+      line1: input.line1.trim(),
+      area: input.area.trim(),
+      city: input.city.trim(),
+      state: input.state.trim(),
+      pincode: input.pincode.trim(),
+      ...(label ? { label } : {}),
       ...(input.addressType ? { address_type: input.addressType } : {}),
-      ...(input.line2 ? { line2: input.line2 } : {}),
-      ...(input.landmark ? { landmark: input.landmark } : {}),
-      ...(input.accessNotes ? { access_notes: input.accessNotes } : {}),
+      ...(line2 ? { line2 } : {}),
+      ...(landmark ? { landmark } : {}),
+      ...(accessNotes ? { access_notes: accessNotes } : {}),
       ...(input.isDefault ? { is_default: true } : {}),
       ...point,
     }),
