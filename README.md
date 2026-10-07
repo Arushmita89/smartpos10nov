@@ -12,3 +12,4 @@ SmartPOS — point-of-sale platform.
 
 Branches `main` and `no-docx` have diverged and are not yet reconciled.
 "# smartpos25092026" 
+"# smartpos8oct2026" 
