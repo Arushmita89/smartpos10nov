@@ -431,7 +431,7 @@ export default function Home() {
                 <span className="text-4xl font-bold text-[#0B1B3A]">
                   {pricing
                     ? formatPlanPrice(pricing.monthly, pricing.locale, pricing.currency)
-                    : '$49'}
+                    : '\u2014'}
                 </span>
                 <span className="text-gray-400">/month</span>
               </div>
@@ -467,7 +467,7 @@ export default function Home() {
                 <span className="text-4xl font-bold text-[#0B1B3A]">
                   {pricing
                     ? formatPlanPrice(pricing.annual, pricing.locale, pricing.currency)
-                    : '$490'}
+                    : '\u2014'}
                 </span>
                 <span className="text-gray-400">/year</span>
               </div>

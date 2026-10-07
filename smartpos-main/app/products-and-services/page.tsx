@@ -1,9 +1,46 @@
 'use client';
 
 import Link from 'next/link';
+import { useEffect, useState } from 'react';
 import { ArrowLeft, Store, Check } from 'lucide-react';
 
+interface LandingPricing {
+  currency: string;
+  locale: string;
+  monthly: number;
+  annual: number;
+}
+
+function formatPrice(amount: number, locale: string, currency: string) {
+  try {
+    return new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency,
+      maximumFractionDigits: 0,
+    }).format(amount);
+  } catch {
+    return `${currency} ${amount.toLocaleString('en')}`;
+  }
+}
+
 export default function ProductsAndServicesPage() {
+  const [pricing, setPricing] = useState<LandingPricing | null>(null);
+
+  useEffect(() => {
+    fetch('/api/landing-plans?currency=INR')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (
+          data &&
+          typeof data.monthly === 'number' &&
+          typeof data.annual === 'number'
+        ) {
+          setPricing(data);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   return (
     <div className="min-h-screen bg-gray-50">
       <nav className="bg-white border-b border-gray-200 sticky top-0 z-50">
@@ -53,14 +90,22 @@ export default function ProductsAndServicesPage() {
             <div className="border border-gray-200 rounded-lg p-4">
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Monthly Plan</p>
               <div className="flex items-baseline gap-1">
-                <span className="text-2xl font-bold text-gray-900">&#8377;999</span>
+                <span className="text-2xl font-bold text-gray-900">
+                  {pricing
+                    ? formatPrice(pricing.monthly, pricing.locale, pricing.currency)
+                    : '\u2014'}
+                </span>
                 <span className="text-sm text-gray-500">/month</span>
               </div>
             </div>
             <div className="border border-green-200 bg-green-50 rounded-lg p-4">
               <p className="text-xs font-semibold text-green-600 uppercase tracking-wide mb-1">Annual Plan (Popular)</p>
               <div className="flex items-baseline gap-1">
-                <span className="text-2xl font-bold text-gray-900">&#8377;9,999</span>
+                <span className="text-2xl font-bold text-gray-900">
+                  {pricing
+                    ? formatPrice(pricing.annual, pricing.locale, pricing.currency)
+                    : '\u2014'}
+                </span>
                 <span className="text-sm text-gray-500">/year</span>
               </div>
             </div>

@@ -485,11 +485,13 @@ end $$;
 -- ============================================================
 -- 10. Seed default subscription plans (adjust prices as needed)
 -- ============================================================
+-- INR is the single base currency; other currencies are converted from
+-- INR at runtime, so only the INR plans are seeded as active.
 insert into public.subscription_plans (name, duration_days, price, currency, is_active, country_code, plan_code) values
-  ('Monthly Plan', 30, 999, 'INR', true, 'IN', 'MONTHLY'),
-  ('Annual Plan', 365, 9999, 'INR', true, 'IN', 'ANNUAL'),
-  ('Monthly Plan', 30, 49, 'USD', true, 'US', 'MONTHLY'),
-  ('Annual Plan', 365, 490, 'USD', true, 'US', 'ANNUAL')
+  ('Monthly Plan', 30, 1500, 'INR', true, 'IN', 'MONTHLY'),
+  ('Annual Plan', 365, 15000, 'INR', true, 'IN', 'ANNUAL'),
+  ('Monthly Plan', 30, 49, 'USD', false, 'US', 'MONTHLY'),
+  ('Annual Plan', 365, 490, 'USD', false, 'US', 'ANNUAL')
 on conflict do nothing;
 
 insert into public.payment_methods (name) values ('card'), ('netbanking'), ('upi'), ('cash')
