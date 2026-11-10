@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { isOwner } from '@/lib/owner';
 import PlanCodesManager from '@/app/features/owner/PlanCodesManager';
+import DeliveryPanel from '@/components/admin/DeliveryPanel';
+import RidersPanel from '@/components/admin/RidersPanel';
 import RestaurantDetailsModal, {
   AdminUser,
   AdminPayment,
@@ -46,7 +48,9 @@ export default function AdminPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [planFilter, setPlanFilter] = useState('all');
-  const [activeTab, setActiveTab] = useState<'users' | 'subscriptions' | 'payments' | 'plans'>('users');
+  const [activeTab, setActiveTab] = useState<
+    'users' | 'subscriptions' | 'payments' | 'delivery' | 'riders' | 'plans'
+  >('users');
   const [totalRevenue, setTotalRevenue] = useState(0);
   const [selectedUser, setSelectedUser] = useState<AdminUser | null>(null);
 
@@ -107,7 +111,14 @@ export default function AdminPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const tab = params.get('tab');
-    if (tab === 'users' || tab === 'subscriptions' || tab === 'payments' || tab === 'plans') {
+    if (
+      tab === 'users' ||
+      tab === 'subscriptions' ||
+      tab === 'payments' ||
+      tab === 'delivery' ||
+      tab === 'riders' ||
+      tab === 'plans'
+    ) {
       setActiveTab(tab);
     }
   }, []);
@@ -286,7 +297,7 @@ export default function AdminPage() {
 
         {/* Tabs */}
         <div className="flex gap-2 border-b border-gray-200">
-          {(['users', 'subscriptions', 'payments', 'plans'] as const).map((tab) => (
+          {(['users', 'subscriptions', 'payments', 'delivery', 'riders', 'plans'] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -488,6 +499,12 @@ export default function AdminPage() {
             )}
           </div>
         )}
+
+        {/* Delivery Assignment Tab */}
+        {activeTab === 'delivery' && <DeliveryPanel />}
+
+        {/* Rider Approval & Management Tab */}
+        {activeTab === 'riders' && <RidersPanel />}
 
         {/* Plan Codes Tab (merged owner panel: value change) */}
         {activeTab === 'plans' && <PlanCodesManager />}

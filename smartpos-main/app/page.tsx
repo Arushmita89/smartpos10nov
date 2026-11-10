@@ -116,7 +116,7 @@ function formatPlanPrice(amount: number, locale: string, currency: string) {
 }
 
 export default function Home() {
-  const { restaurant, subscription, loading } = useAuth();
+  const { restaurant, user, subscription, loading } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [activeSection, setActiveSection] = useState('/');
   const [pricing, setPricing] = useState<LandingPricing | null>(null);
@@ -186,8 +186,8 @@ export default function Home() {
     );
   }
 
-  if (restaurant) {
-    if (!subscription) {
+  if (restaurant || user?.role === 'rider') {
+    if (restaurant && !subscription) {
       return (
         <div className="min-h-screen flex items-center justify-center bg-gray-50">
           <div className="text-center">
@@ -199,7 +199,7 @@ export default function Home() {
         </div>
       );
     }
-    if (subscription.isLocked) {
+    if (restaurant && subscription?.isLocked) {
       return <SubscriptionLocked />;
     }
     return <Dashboard />;

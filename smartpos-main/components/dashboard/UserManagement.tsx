@@ -19,6 +19,7 @@ const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
   { value: 'admin', label: 'Admin' },
   { value: 'kitchen', label: 'Kitchen' },
   { value: 'attendant', label: 'Table Attendant' },
+  { value: 'rider', label: 'Delivery Rider' },
 ];
 
 interface UserModalProps {
@@ -26,7 +27,15 @@ interface UserModalProps {
   initial?: AuthUser;
   submitLabel: string;
   isSelf: boolean;
-  onSubmit: (data: { name: string; login_name: string; password?: string; role: UserRole }) => Promise<void>;
+  onSubmit: (data: {
+    name: string;
+    login_name: string;
+    password?: string;
+    role: UserRole;
+    phone?: string | null;
+    vehicle_number?: string | null;
+    rider_status?: 'available' | 'busy' | 'offline' | null;
+  }) => Promise<void>;
   onClose: () => void;
 }
 
@@ -35,6 +44,11 @@ function UserModal({ title, initial, submitLabel, isSelf, onSubmit, onClose }: U
   const [loginName, setLoginName] = useState(initial?.login_name || '');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<UserRole>(initial?.role || 'attendant');
+  const [phone, setPhone] = useState(initial?.phone || '');
+  const [vehicleNumber, setVehicleNumber] = useState(initial?.vehicle_number || '');
+  const [riderStatus, setRiderStatus] = useState<'available' | 'busy' | 'offline'>(
+    (initial?.rider_status as 'available' | 'busy' | 'offline') || 'offline'
+  );
   const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -58,6 +72,9 @@ function UserModal({ title, initial, submitLabel, isSelf, onSubmit, onClose }: U
         login_name: loginName.trim(),
         password: password || undefined,
         role,
+        phone: phone.trim() || null,
+        vehicle_number: vehicleNumber.trim() || null,
+        rider_status: role === 'rider' ? riderStatus : null,
       });
       toast.success(initial ? 'User updated successfully' : 'User added successfully');
       onClose();
@@ -150,6 +167,44 @@ function UserModal({ title, initial, submitLabel, isSelf, onSubmit, onClose }: U
               </p>
             )}
           </div>
+          {role === 'rider' && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 rounded-lg border border-gray-200 bg-gray-50 p-4">
+              <div>
+                <label className={labelClass}>Phone</label>
+                <input
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="Rider phone number"
+                  className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-sm"
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Vehicle Number</label>
+                <input
+                  type="text"
+                  value={vehicleNumber}
+                  onChange={(e) => setVehicleNumber(e.target.value)}
+                  placeholder="e.g. DL 01 AB 1234"
+                  className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-sm"
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label className={labelClass}>Availability</label>
+                <select
+                  value={riderStatus}
+                  onChange={(e) =>
+                    setRiderStatus(e.target.value as 'available' | 'busy' | 'offline')
+                  }
+                  className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-sm"
+                >
+                  <option value="available">Available</option>
+                  <option value="busy">On delivery (offline)</option>
+                  <option value="offline">Offline</option>
+                </select>
+              </div>
+            </div>
+          )}
           <button
             type="submit"
             disabled={submitting}
@@ -218,6 +273,7 @@ export default function UserManagement() {
     admin: 'bg-purple-100 text-purple-800',
     kitchen: 'bg-orange-100 text-orange-800',
     attendant: 'bg-blue-100 text-blue-800',
+    rider: 'bg-green-100 text-green-800',
   };
 
   return (
@@ -331,7 +387,8 @@ export default function UserManagement() {
           <strong>Roles:</strong> Admin has full access to all features including user
           management. Kitchen can only view and update orders in Kitchen Mode. Table
           Attendants can take orders (POS, Quick Order, Order Status) but cannot manage
-          the menu, settings, or users.
+          the menu, settings, or users. Delivery Riders only see their assigned deliveries
+          in Rider Mode.
         </p>
       </div>
 
@@ -347,6 +404,9 @@ export default function UserManagement() {
               login_name: data.login_name,
               password: data.password,
               role: data.role,
+              phone: data.phone,
+              vehicle_number: data.vehicle_number,
+              rider_status: data.rider_status,
             });
             await fetchUsers();
           }}

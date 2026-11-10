@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth, UserRole, ROLE_LABELS } from '@/contexts/AuthContext';
 import CustomerMode from '@/components/customer/CustomerMode';
 import KitchenMode from '@/components/kitchen/KitchenMode';
+import RiderMode from '@/components/rider/RiderMode';
 import RestaurantOrdering from '@/components/dashboard/RestaurantOrdering';
 import OrderManagement from '@/components/dashboard/OrderManagement';
 import Analytics from '@/components/dashboard/Analytics';
@@ -64,6 +65,7 @@ const ROLE_ACCESS: Record<UserRole, RoleAccess> = {
   },
   kitchen: { sections: [], customerMode: false, kitchenMode: true },
   attendant: { sections: [], customerMode: true, kitchenMode: false },
+  rider: { sections: [], customerMode: false, kitchenMode: false },
 };
 
 export default function Dashboard() {
@@ -157,7 +159,7 @@ export default function Dashboard() {
     setShowMPINAuth(false);
   };
 
-  if (!restaurant) {
+  if (!restaurant && user?.role !== 'rider') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
@@ -190,6 +192,14 @@ export default function Dashboard() {
     return (
       <div className="min-h-screen bg-gray-50">
         <CustomerMode showCustomerBranding onBack={handleSignOut} />
+      </div>
+    );
+  }
+
+  if (user?.role === 'rider') {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <RiderMode onBack={handleSignOut} />
       </div>
     );
   }

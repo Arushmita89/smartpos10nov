@@ -7,21 +7,26 @@ import { isOwner } from '@/lib/owner';
 
 type Restaurant = Database['public']['Tables']['parameters']['Row'];
 
-export type UserRole = 'admin' | 'kitchen' | 'attendant';
+export type UserRole = 'admin' | 'kitchen' | 'attendant' | 'rider';
 
 export interface AuthUser {
   id: string;
-  restaurant_id: string;
+  restaurant_id: string | null;
   name: string;
   login_name: string;
   role: UserRole;
   active: boolean;
+  phone?: string | null;
+  vehicle_number?: string | null;
+  rider_status?: 'available' | 'busy' | 'offline' | null;
+  approval_status?: 'pending' | 'approved' | 'rejected' | null;
 }
 
 export const ROLE_LABELS: Record<UserRole, string> = {
   admin: 'Admin',
   kitchen: 'Kitchen',
   attendant: 'Table Attendant',
+  rider: 'Delivery Rider',
 };
 
 export class SubscriptionRequiredError extends Error {
@@ -78,6 +83,9 @@ interface NewUserData {
   login_name: string;
   password?: string;
   role: UserRole;
+  phone?: string | null;
+  vehicle_number?: string | null;
+  rider_status?: 'available' | 'busy' | 'offline' | null;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -171,6 +179,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (data) loadedUser = data as AuthUser;
         }
 
+        if (
+          loadedUser?.role === 'rider' &&
+          loadedUser.approval_status &&
+          loadedUser.approval_status !== 'approved'
+        ) {
+          localStorage.removeItem('smartpos_user_id');
+          localStorage.removeItem('smartpos_restaurant_id');
+          loadedUser = null;
+        }
+
         if (stored) {
           const { data, error } = await supabase
             .from('parameters')
@@ -211,6 +229,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!userData.active) {
         throw new Error('This account has been deactivated. Contact your admin.');
       }
+
+      if (
+        userData.role === 'rider' &&
+        userData.approval_status &&
+        userData.approval_status !== 'approved'
+      ) {
+        throw new Error(
+          userData.approval_status === 'rejected'
+            ? 'Your rider application was not approved. Contact SmartPOS support.'
+            : 'Your rider account is pending approval. Please try again once the SmartPOS team approves it.'
+        );
+      }
+
+      if (!userData.restaurant_id) {
+        if (userData.role !== 'rider') {
+          throw new Error('Restaurant not found');
+        }
+        localStorage.setItem('smartpos_user_id', userData.id);
+        localStorage.removeItem('smartpos_restaurant_id');
+        setUser(userData as AuthUser);
+        setRestaurant(null);
+        setSubscription(null);
+        return;
+      }
+
       const { data: restData, error: restError } = await supabase
         .from('parameters')
         .select('*')
@@ -505,6 +548,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       password: data.password || '',
       role: data.role,
       active: true,
+      phone: data.phone || null,
+      vehicle_number: data.vehicle_number || null,
+      rider_status:
+        data.role === 'rider' ? data.rider_status || 'offline' : null,
+      approval_status: data.role === 'rider' ? 'approved' : null,
     });
     if (error) throw new Error(error.message || 'Failed to add user');
   };
@@ -517,6 +565,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     if (updates.password) patch.password = updates.password;
     if (updates.role !== undefined) patch.role = updates.role;
+    if (updates.phone !== undefined) patch.phone = updates.phone || null;
+    if (updates.vehicle_number !== undefined)
+      patch.vehicle_number = updates.vehicle_number || null;
+    if (updates.rider_status !== undefined)
+      patch.rider_status = updates.rider_status;
+    if (updates.role !== undefined && updates.role !== 'rider') {
+      patch.rider_status = null;
+    }
 
     if (Object.keys(patch).length === 0) return;
 

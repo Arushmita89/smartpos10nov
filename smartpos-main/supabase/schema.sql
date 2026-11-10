@@ -811,3 +811,40 @@ end;
 $$;
 
 grant execute on function public.record_loyalty_transaction(text, text, numeric, text, text, bigint, text) to anon, authenticated;
+
+-- ============================================================
+-- 14. Rider identity verification
+-- ============================================================
+alter table public.users
+  add column if not exists aadhaar_number text,
+  add column if not exists pan_number text,
+  add column if not exists driving_license_number text,
+  add column if not exists police_verification_number text,
+  add column if not exists aadhaar_document_path text,
+  add column if not exists pan_document_path text,
+  add column if not exists driving_license_document_path text,
+  add column if not exists police_verification_document_path text,
+  add column if not exists documents_verified boolean not null default false,
+  add column if not exists documents_verified_at timestamptz,
+  add column if not exists documents_verified_by text;
+
+create index if not exists idx_users_rider_verified
+  on public.users(documents_verified)
+  where role = 'rider';
+
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'rider-documents',
+  'rider-documents',
+  false,
+  5242880,
+  array['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
+)
+on conflict (id) do nothing;
+
+drop policy if exists rider_documents_anon_upload on storage.objects;
+create policy rider_documents_anon_upload
+  on storage.objects
+  for insert to anon, authenticated
+  with check (bucket_id = 'rider-documents');
+

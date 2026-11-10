@@ -17,6 +17,7 @@ interface PublicRestaurant {
   address_line2?: string | null;
   address_line3?: string | null;
   phone?: string | null;
+  delivery_mode?: string | null;
 }
 
 export default function PublicOrderPage() {
@@ -39,7 +40,7 @@ export default function PublicOrderPage() {
       setNotFound(false);
       const { data, error } = await supabase
         .from('parameters')
-        .select('restaurant_id, restaurant_name, currency, item_options, address_line1, address_line2, address_line3, phone')
+        .select('restaurant_id, restaurant_name, currency, item_options, address_line1, address_line2, address_line3, phone, delivery_mode')
         .eq('restaurant_id', rawCode)
         .maybeSingle();
       if (cancelled) return;

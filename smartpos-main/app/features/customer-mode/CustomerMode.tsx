@@ -1371,9 +1371,44 @@ export default function CustomerMode({
       setCustomerInfo(null);
       toast.success(
         isOffPremise
-          ? `Payment received — Order #${receiptId} sent to kitchen`
-          : `Settled ${priorOrderCount + (cart.length > 0 ? 1 : 0)} order(s) — ${formatCurrency(finalPayable, currency)}`
+          ? `Payment received �?" Order #${receiptId} sent to kitchen`
+          : `Settled ${priorOrderCount + (cart.length > 0 ? 1 : 0)} order(s) �?" ${formatCurrency(finalPayable, currency)}`
       );
+
+      const deliveryMode = (restaurant as any)?.delivery_mode || 'aggregator';
+      if (orderType === 'delivery' && restaurantId && receiptId) {
+        if (deliveryMode === 'aggregator') {
+          fetch('/api/delivery/shadowfax/book', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ orderId: receiptId, restaurantId }),
+          })
+            .then((res) => res.json())
+            .then((data) => {
+              if (data.success && data.awb_number) {
+                toast.success(`Delivery booked - AWB: ${data.awb_number}`);
+              } else if (data.error) {
+                console.error('Shadowfax booking failed:', data.error);
+              }
+            })
+            .catch((err) => console.error('Shadowfax booking error:', err));
+        } else if (deliveryMode === 'own') {
+          fetch('/api/delivery/inhouse/assign', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ orderId: receiptId, restaurantId }),
+          })
+            .then((res) => res.json())
+            .then((data) => {
+              if (data.success && data.rider?.name) {
+                toast.success(`Delivery assigned to ${data.rider.name}`);
+              } else if (data.error) {
+                console.error('Rider assignment failed:', data.error);
+              }
+            })
+            .catch((err) => console.error('Rider assignment error:', err));
+        }
+      }
 
       // Record coupon redemption, loyalty ledger updates and fire event
       // automations — fire-and-forget so checkout is never blocked.

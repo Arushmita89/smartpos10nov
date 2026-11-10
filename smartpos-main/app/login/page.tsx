@@ -12,7 +12,7 @@ import toast from 'react-hot-toast';
 type Tab = 'login' | 'signup' | 'migrate' | 'forgot';
 
 export default function LoginPage() {
-  const { restaurant, subscription, loading, signInWithEmail, signUp, migrate, resetPassword } = useAuth();
+  const { restaurant, user, subscription, loading, signInWithEmail, signUp, migrate, resetPassword } = useAuth();
   const router = useRouter();
   const [tab, setTab] = useState<Tab>('login');
 
@@ -91,8 +91,8 @@ export default function LoginPage() {
     );
   }
 
-  if (restaurant) {
-    if (!subscription) {
+  if (restaurant || user?.role === 'rider') {
+    if (restaurant && !subscription) {
       return (
         <div className="min-h-screen flex items-center justify-center bg-gray-50">
           <div className="text-center">
@@ -439,6 +439,15 @@ export default function LoginPage() {
                   >
                     Sign Up
                   </button>
+                </p>
+                <p className="text-center text-sm text-gray-500">
+                  Want to deliver with SmartPOS?{' '}
+                  <Link
+                    href="/rider/register"
+                    className="text-blue-600 font-medium hover:underline"
+                  >
+                    Register as a rider
+                  </Link>
                 </p>
               </form>
             )}

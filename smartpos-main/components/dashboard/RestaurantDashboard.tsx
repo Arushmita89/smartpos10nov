@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import toast from 'react-hot-toast';
-import { Store, MapPin, Users, Lock, Percent, Phone, FileText, Save, CreditCard } from 'lucide-react';
+import { Store, MapPin, Users, Lock, Percent, Phone, FileText, Save, CreditCard, Truck } from 'lucide-react';
 
 export default function RestaurantDashboard() {
   const { restaurant, updateRestaurant } = useAuth();
@@ -25,6 +25,9 @@ export default function RestaurantDashboard() {
   const [taxRate, setTaxRate] = useState(String(restaurant?.tax_rate || 18));
   const [rzpKeyId, setRzpKeyId] = useState(restaurant?.razorpay_key_id || '');
   const [rzpKeySecret, setRzpKeySecret] = useState('');
+  const [deliveryMode, setDeliveryMode] = useState<'own' | 'aggregator' | 'both'>(
+    (restaurant?.delivery_mode as 'own' | 'aggregator' | 'both') || 'aggregator'
+  );
   const [saving, setSaving] = useState(false);
 
   if (!restaurant) return null;
@@ -46,6 +49,7 @@ export default function RestaurantDashboard() {
         login_name: loginName.toLowerCase().trim() || null,
         mpin: mpin,
         tax_rate: parseFloat(taxRate) || 18,
+        delivery_mode: deliveryMode,
       };
 
       if (newPassword) {
@@ -82,6 +86,7 @@ export default function RestaurantDashboard() {
         login_name: loginName.toLowerCase().trim() || null,
         mpin: mpin,
         tax_rate: parseFloat(taxRate) || 18,
+        delivery_mode: deliveryMode,
       });
 
       if (rzpKeyId.trim() || rzpKeySecret.trim()) {
@@ -348,6 +353,32 @@ export default function RestaurantDashboard() {
           </div>
           <p className="text-xs text-gray-400 mt-1.5">
             This MPIN is required when switching from Customer Mode to Restaurant Mode.
+          </p>
+        </div>
+      </div>
+
+      {/* Delivery */}
+      <div className={sectionClass}>
+        <h3 className={sectionTitleClass}>
+          <Truck className="h-4 w-4 mr-2 text-blue-600" />
+          Delivery
+        </h3>
+        <div className="max-w-sm">
+          <label className={labelClass}>Delivery Mode</label>
+          <select
+            value={deliveryMode}
+            onChange={(e) =>
+              setDeliveryMode(e.target.value as 'own' | 'aggregator' | 'both')
+            }
+            className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-sm"
+          >
+            <option value="own">Own delivery riders</option>
+            <option value="aggregator">External partner (Shadowfax)</option>
+            <option value="both">Both</option>
+          </select>
+          <p className="text-xs text-gray-400 mt-1.5">
+            Choose who fulfils delivery orders. Add riders under Users with the
+            &quot;Delivery Rider&quot; role, then assign them from Order Management.
           </p>
         </div>
       </div>

@@ -40,6 +40,7 @@ export type Database = {
           item_options: string[] | null;
           razorpay_key_id: string | null;
           razorpay_key_secret: string | null;
+          delivery_mode: string | null;
         };
         Insert: {
           restaurant_id: string;
@@ -66,6 +67,7 @@ export type Database = {
           item_options?: string[] | null;
           razorpay_key_id?: string | null;
           razorpay_key_secret?: string | null;
+          delivery_mode?: string | null;
         };
         Update: {
           restaurant_name?: string;
@@ -91,34 +93,81 @@ export type Database = {
           item_options?: string[] | null;
           razorpay_key_id?: string | null;
           razorpay_key_secret?: string | null;
+          delivery_mode?: string | null;
         };
       };
       users: {
         Row: {
           id: string;
-          restaurant_id: string;
+          restaurant_id: string | null;
           name: string;
           login_name: string;
           password: string;
           role: string;
           active: boolean;
+          phone: string | null;
+          vehicle_number: string | null;
+          rider_status: string | null;
+          approval_status: string | null;
+          aadhaar_number: string | null;
+          pan_number: string | null;
+          driving_license_number: string | null;
+          police_verification_number: string | null;
+          aadhaar_document_path: string | null;
+          pan_document_path: string | null;
+          driving_license_document_path: string | null;
+          police_verification_document_path: string | null;
+          documents_verified: boolean;
+          documents_verified_at: string | null;
+          documents_verified_by: string | null;
           created_at: string;
         };
         Insert: {
           id?: string;
-          restaurant_id: string;
+          restaurant_id?: string | null;
           name: string;
           login_name: string;
           password: string;
           role?: string;
           active?: boolean;
+          phone?: string | null;
+          vehicle_number?: string | null;
+          rider_status?: string | null;
+          approval_status?: string | null;
+          aadhaar_number?: string | null;
+          pan_number?: string | null;
+          driving_license_number?: string | null;
+          police_verification_number?: string | null;
+          aadhaar_document_path?: string | null;
+          pan_document_path?: string | null;
+          driving_license_document_path?: string | null;
+          police_verification_document_path?: string | null;
+          documents_verified?: boolean;
+          documents_verified_at?: string | null;
+          documents_verified_by?: string | null;
         };
         Update: {
+          restaurant_id?: string | null;
           name?: string;
           login_name?: string;
           password?: string;
           role?: string;
           active?: boolean;
+          phone?: string | null;
+          vehicle_number?: string | null;
+          rider_status?: string | null;
+          approval_status?: string | null;
+          aadhaar_number?: string | null;
+          pan_number?: string | null;
+          driving_license_number?: string | null;
+          police_verification_number?: string | null;
+          aadhaar_document_path?: string | null;
+          pan_document_path?: string | null;
+          driving_license_document_path?: string | null;
+          police_verification_document_path?: string | null;
+          documents_verified?: boolean;
+          documents_verified_at?: string | null;
+          documents_verified_by?: string | null;
         };
       };
       menu: {
@@ -204,6 +253,14 @@ export type Database = {
           promo_code: string | null;
           loyalty_points_redeemed: number;
           loyalty_points_earned: number;
+          delivery_partner: string | null;
+          delivery_fee: number | null;
+          delivery_status: string | null;
+          delivery_awb: string | null;
+          delivery_tracking_url: string | null;
+          delivery_rider_id: string | null;
+          customer_latitude: number | null;
+          customer_longitude: number | null;
         };
         Insert: {
           restaurant_id: string;
@@ -227,6 +284,14 @@ export type Database = {
           promo_code?: string | null;
           loyalty_points_redeemed?: number;
           loyalty_points_earned?: number;
+          delivery_partner?: string | null;
+          delivery_fee?: number | null;
+          delivery_status?: string | null;
+          delivery_awb?: string | null;
+          delivery_tracking_url?: string | null;
+          delivery_rider_id?: string | null;
+          customer_latitude?: number | null;
+          customer_longitude?: number | null;
         };
         Update: {
           status?: string;
@@ -238,6 +303,80 @@ export type Database = {
           promo_code?: string | null;
           loyalty_points_redeemed?: number;
           loyalty_points_earned?: number;
+          delivery_partner?: string | null;
+          delivery_fee?: number | null;
+          delivery_status?: string | null;
+          delivery_awb?: string | null;
+          delivery_tracking_url?: string | null;
+          delivery_rider_id?: string | null;
+          customer_latitude?: number | null;
+          customer_longitude?: number | null;
+        };
+      };
+      delivery_assignments: {
+        Row: {
+          id: number;
+          restaurant_id: string;
+          order_id: number;
+          rider_id: string | null;
+          status: string;
+          assigned_by: string | null;
+          notes: string | null;
+          assigned_at: string | null;
+          accepted_at: string | null;
+          picked_up_at: string | null;
+          delivered_at: string | null;
+          cancelled_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          restaurant_id: string;
+          order_id: number;
+          rider_id?: string | null;
+          status?: string;
+          assigned_by?: string | null;
+          notes?: string | null;
+          assigned_at?: string | null;
+          accepted_at?: string | null;
+          picked_up_at?: string | null;
+          delivered_at?: string | null;
+          cancelled_at?: string | null;
+        };
+        Update: {
+          rider_id?: string | null;
+          status?: string;
+          notes?: string | null;
+          accepted_at?: string | null;
+          picked_up_at?: string | null;
+          delivered_at?: string | null;
+          cancelled_at?: string | null;
+        };
+      };
+      rider_locations: {
+        Row: {
+          id: number;
+          restaurant_id: string;
+          rider_id: string;
+          order_id: number | null;
+          latitude: number;
+          longitude: number;
+          accuracy: number | null;
+          recorded_at: string;
+        };
+        Insert: {
+          restaurant_id: string;
+          rider_id: string;
+          order_id?: number | null;
+          latitude: number;
+          longitude: number;
+          accuracy?: number | null;
+          recorded_at?: string;
+        };
+        Update: {
+          latitude?: number;
+          longitude?: number;
+          accuracy?: number | null;
         };
       };
       customers: {

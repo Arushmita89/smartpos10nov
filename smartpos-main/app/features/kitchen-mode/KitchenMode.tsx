@@ -357,6 +357,16 @@ export default function KitchenMode({ onBack }: KitchenModeProps) {
                         {order.customer_name}
                       </span>
                     )}
+                    {(order as any).order_type === "delivery" && (
+                      <span className="flex items-center">
+                        <span className="px-1.5 py-0.5 rounded-full text-xs bg-purple-100 text-purple-800">Delivery</span>
+                      </span>
+                    )}
+                    {(order as any).order_type === "delivery" && (order as any).delivery_awb && (
+                      <span className="flex items-center">
+                        <span className="px-1.5 py-0.5 rounded-full text-xs bg-indigo-100 text-indigo-800">SF: {(order as any).delivery_awb} {(order as any).delivery_status || ''}</span>
+                      </span>
+                    )}
                     {order.order_type === "delivery" && order.customer_address && (
                       <span className="flex items-center">
                         <MapPin className="h-3.5 w-3.5 mr-1" />
@@ -412,7 +422,34 @@ export default function KitchenMode({ onBack }: KitchenModeProps) {
                       </div>
                     </div>
 
-                    <div className="mt-4 flex items-center space-x-2">
+                    <div className="mt-4 flex items-center space-x-2 flex-wrap">
+                      {(order as any).order_type === "delivery" &&
+                        !(order as any).delivery_awb &&
+                        !(order as any).delivery_rider_id && (
+                        <button
+                          onClick={async () => {
+                            try {
+                              const res = await fetch('/api/delivery/shadowfax/book', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ orderId: order.id, restaurantId: restaurant?.restaurant_id }),
+                              });
+                              const data = await res.json();
+                              if (data.success) {
+                                toast.success(`Delivery booked - AWB: ${data.awb_number}`);
+                                window.location.reload();
+                              } else {
+                                toast.error(data.error || 'Failed to book');
+                              }
+                            } catch (e) {
+                              toast.error('Failed to book delivery');
+                            }
+                          }}
+                          className="w-full mb-2 bg-purple-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-purple-700 flex items-center justify-center transition-colors"
+                        >
+                          Book Delivery (Shadowfax)
+                        </button>
+                      )}
                       {prepStatus === "pending" && (
                         <>
                           <button

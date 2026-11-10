@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Bell, X, BellRing } from 'lucide-react';
+import { Bell, X, BellRing, Truck } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
 interface Notif {
@@ -12,12 +12,14 @@ interface Notif {
   message: string | null;
   is_read: boolean;
   created_at: string;
+  source?: 'subscription' | 'order';
 }
 
 export default function NotificationBell() {
   const { restaurant, subscription } = useAuth();
   const router = useRouter();
   const [notifications, setNotifications] = useState<Notif[]>([]);
+  const [orderNotifications, setOrderNotifications] = useState<Notif[]>([]);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -34,7 +36,37 @@ export default function NotificationBell() {
       );
       if (!res.ok) return;
       const data = await res.json();
-      setNotifications(Array.isArray(data.notifications) ? data.notifications : []);
+      setNotifications(
+        Array.isArray(data.notifications)
+          ? data.notifications.map((n: Notif) => ({
+              ...n,
+              source: 'subscription' as const,
+            }))
+          : []
+      );
+    } catch {
+      // ignore notification load errors
+    }
+  };
+
+  const loadOrderNotifications = async () => {
+    if (!restaurantId) return;
+    try {
+      const res = await fetch(
+        `/api/order-notifications?restaurantId=${encodeURIComponent(
+          restaurantId
+        )}`
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      setOrderNotifications(
+        Array.isArray(data.notifications)
+          ? data.notifications.map((n: Notif) => ({
+              ...n,
+              source: 'order' as const,
+            }))
+          : []
+      );
     } catch {
       // ignore notification load errors
     }
@@ -43,7 +75,11 @@ export default function NotificationBell() {
   useEffect(() => {
     if (!canNotify) return;
     load();
-    const interval = setInterval(load, 60000);
+    loadOrderNotifications();
+    const interval = setInterval(() => {
+      load();
+      loadOrderNotifications();
+    }, 60000);
     const onDocClick = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) {
         setOpen(false);
@@ -57,17 +93,36 @@ export default function NotificationBell() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [restaurantId, canNotify]);
 
-  const unread = notifications.filter((n) => !n.is_read).length;
+  const allNotifications = useMemo(
+    () =>
+      [...notifications, ...orderNotifications].sort(
+        (a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      ),
+    [notifications, orderNotifications]
+  );
+
+  const unread = allNotifications.filter((n) => !n.is_read).length;
 
   const markAllRead = async () => {
     if (!restaurantId) return;
     try {
-      await fetch('/api/subscription/notifications', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ restaurantId, markAll: true }),
-      });
+      await Promise.all([
+        fetch('/api/subscription/notifications', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ restaurantId, markAll: true }),
+        }),
+        fetch('/api/order-notifications', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ restaurantId, markAll: true }),
+        }),
+      ]);
       setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+      setOrderNotifications((prev) =>
+        prev.map((n) => ({ ...n, is_read: true }))
+      );
     } catch {
       // ignore
     }
@@ -111,29 +166,47 @@ export default function NotificationBell() {
                 </span>
               )}
             </p>
-            <button
-              onClick={() => setOpen(false)}
-              className="text-gray-400 hover:text-gray-600"
-              aria-label="Close notifications"
-            >
-              <X className="h-4 w-4" />
-            </button>
+            <div className="flex items-center gap-3">
+              {unread > 0 && (
+                <button
+                  onClick={markAllRead}
+                  className="text-xs font-medium text-blue-600 hover:underline"
+                >
+                  Mark all read
+                </button>
+              )}
+              <button
+                onClick={() => setOpen(false)}
+                className="text-gray-400 hover:text-gray-600"
+                aria-label="Close notifications"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
           </div>
 
           <div className="max-h-80 overflow-y-auto">
-            {notifications.length === 0 && (
+            {allNotifications.length === 0 && (
               <p className="text-sm text-gray-500 p-4 text-center">
                 No notifications
               </p>
             )}
-            {notifications.map((n) => (
+            {allNotifications.map((n) => (
               <div
-                key={n.id}
+                key={`${n.source || 'subscription'}-${n.id}`}
                 className={`px-4 py-3 border-b border-gray-50 ${
                   n.is_read ? '' : 'bg-blue-50'
                 }`}
               >
-                <p className="text-sm font-medium text-gray-900">{n.title}</p>
+                <div className="flex items-center gap-1.5">
+                  {n.source === 'order' && (
+                    <span className="inline-flex items-center rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800">
+                      <Truck className="mr-0.5 h-3 w-3" />
+                      Delivery
+                    </span>
+                  )}
+                  <p className="text-sm font-medium text-gray-900">{n.title}</p>
+                </div>
                 <p className="text-xs text-gray-600 mt-0.5">{n.message}</p>
                 <p className="text-[10px] text-gray-400 mt-1">
                   {new Date(n.created_at).toLocaleString('en-IN')}
