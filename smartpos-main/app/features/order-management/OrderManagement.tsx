@@ -628,6 +628,9 @@ export default function OrderManagement({
                           )}
                       </div>
                       <div className="flex items-center space-x-2 flex-wrap">
+                        {/*
+                          Shadowfax booking disabled. Assign riders manually from
+                          the admin Delivery tab instead.
                         {(order as any).order_type === 'delivery' &&
                           !(order as any).delivery_awb &&
                           !(order as any).delivery_rider_id && (
@@ -655,6 +658,7 @@ export default function OrderManagement({
                             Book Delivery (Shadowfax)
                           </button>
                         )}
+                        */}
                         {(order.status === 'pending' || !order.status) && (
                           <button
                             onClick={() => updateOrderStatus(order.id, 'in_progress')}

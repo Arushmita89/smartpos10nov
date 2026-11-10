@@ -1378,6 +1378,9 @@ export default function CustomerMode({
       const deliveryMode = (restaurant as any)?.delivery_mode || 'aggregator';
       if (orderType === 'delivery' && restaurantId && receiptId) {
         if (deliveryMode === 'aggregator') {
+          // Shadowfax auto-booking disabled. Delivery orders stay unassigned
+          // and show up in the admin Delivery tab for manual rider selection.
+          /*
           fetch('/api/delivery/shadowfax/book', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1392,6 +1395,7 @@ export default function CustomerMode({
               }
             })
             .catch((err) => console.error('Shadowfax booking error:', err));
+          */
         } else if (deliveryMode === 'own') {
           fetch('/api/delivery/inhouse/assign', {
             method: 'POST',

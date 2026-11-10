@@ -423,6 +423,9 @@ export default function KitchenMode({ onBack }: KitchenModeProps) {
                     </div>
 
                     <div className="mt-4 flex items-center space-x-2 flex-wrap">
+                      {/*
+                        Shadowfax booking disabled. Assign riders manually from
+                        the admin Delivery tab instead.
                       {(order as any).order_type === "delivery" &&
                         !(order as any).delivery_awb &&
                         !(order as any).delivery_rider_id && (
@@ -450,6 +453,7 @@ export default function KitchenMode({ onBack }: KitchenModeProps) {
                           Book Delivery (Shadowfax)
                         </button>
                       )}
+                      */}
                       {prepStatus === "pending" && (
                         <>
                           <button
