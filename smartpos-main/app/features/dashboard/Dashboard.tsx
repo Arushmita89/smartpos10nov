@@ -225,6 +225,8 @@ export default function Dashboard() {
     );
   }
 
+  if (!restaurant) return null;
+
   const allSidebarItems = [
     { id: 'pos', name: 'Point of Sale', icon: ShoppingCart },
     { id: 'order-now', name: 'Order Now', icon: Store },
